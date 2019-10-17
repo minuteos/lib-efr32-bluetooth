@@ -28,7 +28,7 @@ BGBUILD = $(EFM32_SDK_BT_BIN)bgbuild
 INCLUDE_DIRS += $(EFM32_BT_INCLUDE)common $(EFM32_BT_INCLUDE)soc $(EFM32_RAIL_INCLUDE)common $(EFM32_RAIL_INCLUDE)chip/efr32/$(EFM32_RAIL_CHIP)
 DEFINES += EFM32_BT_DEVICE=$(EFM32_BT_DEVICE)
 
-LIB_DIRS += $(EFM32_SDK_BT_DEV)/GCC/
+LIB_DIRS += $(EFM32_SDK_BT_DEV)GCC/
 LIBS += bluetooth psstore rail mbedtls
 
 GATT_DB = $(firstword $(wildcard $(foreach d,$(SOURCE_DIRS),$(d)gatt.xml)))
