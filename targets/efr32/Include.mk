@@ -39,10 +39,10 @@ GATT_PREFIX = $(GATT_DB:.xml=)
 prebuild: efr32_bt_sdk
 
 efr32_bt_sdk: efm32_sdk
-	@$(LN) -shf $(EFM32_SDK_ORIGIN_BT_DEV) $(EFM32_SDK_BT_DEV:/=)
-	@$(LN) -shf $(EFM32_SDK_ORIGIN_BT_STACK) $(EFM32_SDK_BT_STACK:/=)
-	@$(LN) -shf $(EFM32_SDK_ORIGIN_BT_BIN) $(EFM32_SDK_BT_BIN:/=)
-	@$(LN) -shf $(EFM32_SDK_ORIGIN_RAIL) $(EFM32_SDK_RAIL:/=)
+	@$(LN) -snf $(EFM32_SDK_ORIGIN_BT_DEV) $(EFM32_SDK_BT_DEV:/=)
+	@$(LN) -snf $(EFM32_SDK_ORIGIN_BT_STACK) $(EFM32_SDK_BT_STACK:/=)
+	@$(LN) -snf $(EFM32_SDK_ORIGIN_BT_BIN) $(EFM32_SDK_BT_BIN:/=)
+	@$(LN) -snf $(EFM32_SDK_ORIGIN_RAIL) $(EFM32_SDK_RAIL:/=)
 
 $(GATT_DB:.xml=_db.h): $(GATT_DB:.xml=_db.c)
 $(GATT_DB:.xml=_db.c): $(GATT_DB)
