@@ -12,10 +12,10 @@ EFM32_SDK_ORIGIN_BT_STACK = $(EFM32_SDK_ORIGIN)protocol/bluetooth/ble_stack/
 EFM32_SDK_ORIGIN_BT_BIN = $(EFM32_SDK_ORIGIN)protocol/bluetooth/bin/
 EFM32_SDK_ORIGIN_RAIL = $(EFM32_SDK_ORIGIN)platform/radio/rail_lib/
 
-EFM32_SDK_BT_DEV = $(OUTDIR)efr32-bt-device/
-EFM32_SDK_BT_STACK = $(OUTDIR)efr32-bt-stack/
-EFM32_SDK_BT_BIN = $(OUTDIR)efr32-bt-bin/
-EFM32_SDK_RAIL = $(OUTDIR)efr32-rail/
+EFM32_SDK_BT_DEV = $(OBJDIR)efr32-bt-device/
+EFM32_SDK_BT_STACK = $(OBJDIR)efr32-bt-stack/
+EFM32_SDK_BT_BIN = $(OBJDIR)efr32-bt-bin/
+EFM32_SDK_RAIL = $(OBJDIR)efr32-rail/
 
 EFM32_BT_INCLUDE = $(EFM32_SDK_BT_STACK)inc/
 EFM32_RAIL_INCLUDE = $(EFM32_SDK_RAIL)
@@ -38,14 +38,24 @@ GATT_PREFIX = $(GATT_DB:.xml=)
 
 prebuild: efr32_bt_sdk
 
-efr32_bt_sdk: efm32_sdk
+efr32_bt_sdk: $(EFM32_SDK_BT_DEV) $(EFM32_SDK_BT_STACK) $(EFM32_SDK_BT_BIN) $(EFM32_SDK_RAIL)
+
+$(BGBUILD): $(EFM32_SDK_BT_BIN)
+
+$(EFM32_SDK_BT_DEV): $(OBJDIR)
 	@$(LN) -snf $(EFM32_SDK_ORIGIN_BT_DEV) $(EFM32_SDK_BT_DEV:/=)
+
+$(EFM32_SDK_BT_STACK): $(OBJDIR)
 	@$(LN) -snf $(EFM32_SDK_ORIGIN_BT_STACK) $(EFM32_SDK_BT_STACK:/=)
+
+$(EFM32_SDK_BT_BIN): $(OBJDIR)
 	@$(LN) -snf $(EFM32_SDK_ORIGIN_BT_BIN) $(EFM32_SDK_BT_BIN:/=)
+
+$(EFM32_SDK_RAIL): $(OBJDIR)
 	@$(LN) -snf $(EFM32_SDK_ORIGIN_RAIL) $(EFM32_SDK_RAIL:/=)
 
 $(GATT_DB:.xml=_db.h): $(GATT_DB:.xml=_db.c)
-$(GATT_DB:.xml=_db.c): $(GATT_DB)
+$(GATT_DB:.xml=_db.c): $(GATT_DB) $(BGBUILD)
 	$(BGBUILD) -g $<
 
 prebuild: $(GATT_DB:.xml=_db.c)
