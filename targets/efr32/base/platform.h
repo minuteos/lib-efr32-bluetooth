@@ -8,6 +8,8 @@
  * Configures platform definitions required for libbluetooth to work
  */
 
+#if !BOOTLOADER
+
 #ifndef EFM32_HFXO_FREQUENCY
 #define EFM32_HFXO_FREQUENCY    38400000
 #endif
@@ -30,6 +32,8 @@
 
 #ifndef EFM32_USE_DCDC
 #define EFM32_USE_DCDC      1
+#endif
+
 #endif
 
 #include_next <base/platform.h>
