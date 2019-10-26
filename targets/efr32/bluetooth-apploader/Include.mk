@@ -9,3 +9,5 @@
 ADDITIONAL_BLOBS += $(EFM32_SDK_BT_DEV)GCC/binapploader.o
 
 TARGETS += efr32-apploader
+
+$(EFM32_SDK_BT_DEV)GCC/binapploader.o: $(EFM32_SDK_BT_DEV)
