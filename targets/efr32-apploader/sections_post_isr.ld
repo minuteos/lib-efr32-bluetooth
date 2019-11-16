@@ -11,10 +11,15 @@
  */
 
 SECTIONS {
-    .application_properties : {
+    .text.application_properties : {
         . = __app_start + 0x34; /* pointer must be at offset 0x34 */
         LONG(__app_properties);
         __app_properties = .;
         KEEP(*(.application_properties));
     } >FLASH
+
+    .text.gatt : {
+        KEEP(*(.gatt_header));
+        KEEP(*(.gatt_data));
+    } > FLASH
 }

@@ -1,10 +1,10 @@
 SECTIONS {
-    .text_apploader :
+    .bin.apploader :
     {
         KEEP(*(.binapploader*))
     } >FLASH
 
-    .text_signature :
+    .bin.apploader.sig :
     {
         . = ALIGN(2048);
     } >FLASH
