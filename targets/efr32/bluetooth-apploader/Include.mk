@@ -6,7 +6,7 @@
 # efr32/bluetooth-apploader/Include.mk
 #
 
-ADDITIONAL_BLOBS += $(EFM32_SDK_BT_DEV)GCC/binapploader.o
+GECKO_APPLOADER = $(EFM32_SDK_BT_DEV)GCC/binapploader.o
 
 TARGETS += efr32-apploader
 
