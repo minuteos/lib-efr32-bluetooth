@@ -205,6 +205,14 @@ async_def()
                     }
 
                     RESBIT(connections, e.connection);
+
+#ifdef gattdb_ota_control
+                    if (GETBIT(dfuConnection, e.connection))
+                    {
+                        MYDBG("...DFU reset");
+                        gecko_cmd_system_reset(2);
+                    }
+#endif
                     break;
                 }
 
@@ -345,6 +353,18 @@ async_def()
                     auto &e = evt->data.evt_gatt_server_user_write_request;
                     MYDBG("evt_gatt_server_user_write_request: %d, char %04X, op %d, offset %d, data %H",
                         e.connection, e.characteristic, e.att_opcode, e.offset, Span(e.value.data, e.value.len));
+
+#ifdef gattdb_ota_control
+                    // built-in DFU handling
+                    if (e.characteristic == gattdb_ota_control)
+                    {
+                        MYDBG("...DFU reset requested");
+                        SETBIT(dfuConnection, e.connection);
+                        gecko_cmd_gatt_server_send_user_write_response(e.connection, gattdb_ota_control, bg_err_success);
+                        CloseConnection(e.connection);
+                        break;
+                    }
+#endif
 
                     if (callbacks)
                     {

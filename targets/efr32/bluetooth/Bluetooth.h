@@ -371,6 +371,16 @@ public:
 #endif
     }
 
+    //! Closes the specified connection
+    errorcode_t CloseConnection(uint8_t connection)
+    {
+#ifdef gecko_cmd_le_connection_close_id
+        return ProcessResult(gecko_cmd_le_connection_close(connection)->result);
+#else
+        return ProcessResult(gecko_cmd_endpoint_close(connection)->result);
+#endif
+    }
+
     /********** gatt **********/
 
     //! Initiates the write of a new value to the specified characteristic or descriptor
@@ -448,7 +458,10 @@ private:
     uint16_t advTimeout = 0;                //< Advertisement timeout
     uint8_t advCount = 0;                   //< Advertisement count limit
 #endif
-    uint32_t connections;                   //< Active connections mask
+    uint32_t connections = 0;               //< Active connections mask
+#ifdef gattdb_ota_control
+    uint32_t dfuConnection = 0;             //< Connection requesting DFU reset
+#endif
     int ioBuffers;                          //< Total count of I/O buffers
     int bufferSize;                         //< I/O buffer size
     Callbacks *callbacks = NULL;            //< Callbacks
