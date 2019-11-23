@@ -78,6 +78,31 @@ class Bluetooth
 public:
     /********** EXTERNAL EVENTS **********/
 
+    enum struct Security
+    {
+        None,
+        Paired,
+        Authenticated,
+        Secure,
+    };
+
+    enum struct AddressType
+    {
+        Public,
+        Random,
+        PublicIdentity,
+        RandomIdentity,
+    };
+
+    enum PHY
+    {
+        PHY1M = le_gap_phy_1m,
+        PHY2M = le_gap_phy_2m,
+        PHYCoded = le_gap_phy_coded,
+    };
+
+    DECLARE_FLAG_ENUM(PHY);
+
     struct AttributeValueChanged
     {
         uint8_t connection;
@@ -143,29 +168,33 @@ public:
         uint16_t characteristic;
     };
 
+    struct Advertisement
+    {
+        uint8_t packetType;
+        bd_addr address;
+        AddressType addressType;
+        uint8_t bonding;
+        PHY phy, phy2;
+        uint8_t sid;
+        int8_t rssi, txPower;
+        uint8_t channel;
+        uint16_t periodicInterval;
+        Span data;
+
+        Span HostAddress() const { return address; }
+        Span GetField(uint8_t field) const { return GetFieldImpl(data, field); }
+
+    private:
+        static res_pair_t GetFieldImpl(Span s, uint8_t field);
+    };
+
     struct Callbacks
     {
-        virtual async(OnBluetoothAttributeValueChanged, AttributeValueChanged e) = 0;
-        virtual async(OnBluetoothCharacteristicReadRequest, CharacteristicReadRequest e) = 0;
-        virtual async(OnBluetoothCharacteristicWriteRequest, CharacteristicWriteRequest e) = 0;
-        virtual async(OnBluetoothCharacteristicEventRequest, CharacteristicEventRequest e) = 0;
-    };
-
-    /********** CONNECTION INFO **********/
-    enum struct Security
-    {
-        None,
-        Paired,
-        Authenticated,
-        Secure,
-    };
-
-    enum struct AddressType
-    {
-        Public,
-        Random,
-        PublicIdentity,
-        RandomIdentity,
+        virtual async(OnBluetoothAttributeValueChanged, AttributeValueChanged e) async_def_return(0);
+        virtual async(OnBluetoothCharacteristicReadRequest, CharacteristicReadRequest e) async_def_return(0);
+        virtual async(OnBluetoothCharacteristicWriteRequest, CharacteristicWriteRequest e) async_def_return(0);
+        virtual async(OnBluetoothCharacteristicEventRequest, CharacteristicEventRequest e) async_def_return(0);
+        virtual async(OnBluetoothAdvertisementReceived, Advertisement e) async_def_return(0);
     };
 
     /**** BUFFER STATUS ****/
@@ -251,26 +280,24 @@ public:
         NonScannable = le_gap_connectable_non_scannable,
     };
 
+    //! Sets advertisement PHY
+    errorcode_t SetAdvertisementPHY(PHY primary, PHY secondary = PHY1M)
+    {
+        return ProcessResult(gecko_cmd_le_gap_set_advertise_phy(0, primary, secondary)->result);
+    }
+
     //! Sets custom advertisement data
     errorcode_t SetAdvertisementData(Span data)
     {
         ASSERT(data.Length() <= 30);
-#ifdef gecko_cmd_le_gap_bt5_set_adv_data_id
         return ProcessResult(gecko_cmd_le_gap_bt5_set_adv_data(0, 0, data.Length(), data)->result);
-#else
-        return ProcessResult(gecko_cmd_le_gap_set_adv_data(0, data.Length(), data)->result);
-#endif
     }
 
     //! Sets custom scan response data
     errorcode_t SetScanResponseData(Span data)
     {
         ASSERT(data.Length() <= 30);
-#ifdef gecko_cmd_le_gap_bt5_set_adv_data_id
         return ProcessResult(gecko_cmd_le_gap_bt5_set_adv_data(0, 1, data.Length(), data)->result);
-#else
-        return ProcessResult(gecko_cmd_le_gap_set_adv_data(1, data.Length(), data)->result);
-#endif
     }
 
     //! Configures advertisement interval duration in milliseconds
@@ -292,7 +319,6 @@ public:
         advUpdate = true;
     }
 
-#ifdef gecko_cmd_le_gap_set_advertise_timing_id
     //! Configures advertisement timeout (time after which advertising stops)
     void SetAdvertisementTimeout(float t)
     {
@@ -307,10 +333,15 @@ public:
         advCount = count;
         advUpdate = true;
     }
-#endif
 
     //! Starts advertising
     errorcode_t StartAdvertising(Discoverable discover, Connectable connect, bool keep = false);
+
+    //! Configures the preferred and accepted PHYs to be used for connections
+    errorcode_t SetConnectionPHY(PHY preferred, PHY accepted)
+    {
+        return ProcessResult(gecko_cmd_le_gap_set_conn_phy(preferred, accepted)->result);
+    }
 
     //! Configures the parameters of new connections
     errorcode_t SetConnectionParameters(float tConMin, float tConMax, uint32_t slaveLatency, uint32_t timeout)
@@ -322,11 +353,7 @@ public:
         ASSERT(timeout >= 100 && timeout <= 32000);
         ASSERT(max >= min);
         ASSERT(timeout > tConMax * (slaveLatency + 1));
-#ifdef gecko_cmd_le_gap_set_conn_timing_parameters_id
         return ProcessResult(gecko_cmd_le_gap_set_conn_timing_parameters(min, max, slaveLatency, timeout / 10, 0, 0xFFFF)->result);
-#else
-        return ProcessResult(gecko_cmd_le_gap_set_conn_parameters(min, max, slaveLatency, timeout / 10)->result);
-#endif
     }
 
     //! Configures the parameters of the specified connection
@@ -339,46 +366,36 @@ public:
         ASSERT(timeout >= 100 && timeout <= 32000);
         ASSERT(max >= min);
         ASSERT(timeout > tConMax * (slaveLatency + 1));
-#ifdef gecko_cmd_le_connection_set_timing_parameters_id
         return ProcessResult(gecko_cmd_le_connection_set_timing_parameters(connection, min, max, slaveLatency, timeout / 10, 0, 0xFFFF)->result);
-#else
-        return ProcessResult(gecko_cmd_le_connection_set_parameters(connection, min, max, slaveLatency, timeout / 10)->result);
-#endif
     }
 
     //! Configures scanning parameters
-    errorcode_t SetScanningParameters(float tInterval, float tWindow = 0, bool active = false)
+    errorcode_t SetScanningParameters(float tWindow, float tInterval = 0, bool active = false, PHY phys = PHY1M | PHYCoded)
     {
-        uint32_t interval = tInterval / 0.625f, window = tWindow < tInterval ? interval : (tWindow / 0.625f);
+        uint32_t window = tWindow / 0.625f, interval = tInterval < tWindow ? window : (tInterval / 0.625f);
         ASSERT(interval >= 4 && interval <= 0x4000);
         ASSERT(window >= 4 && window <= 0x4000);
-#ifdef gecko_cmd_le_gap_set_discovery_timing_id
-        auto err = ProcessResult(gecko_cmd_le_gap_set_discovery_timing(le_gap_phy_1m, interval, window)->result);
-        if (!err) err = ProcessResult(gecko_cmd_le_gap_set_discovery_type(le_gap_phy_1m, active)->result);
+        auto err = ProcessResult(gecko_cmd_le_gap_set_discovery_timing(phys, interval, window)->result);
+        if (!err) err = ProcessResult(gecko_cmd_le_gap_set_discovery_type(phys, active)->result);
         return err;
-#else
-        return ProcessResult(gecko_cmd_le_gap_set_scan_parameters(interval, window, active)->result);
-#endif
     }
 
     //! Starts the scanning process
-    errorcode_t StartScanning(ScanMode mode)
+    errorcode_t StartScanning(ScanMode mode, PHY phy = PHY1M)
     {
-#ifdef gecko_cmd_le_gap_start_discovery_id
-        return ProcessResult(gecko_cmd_le_gap_start_discovery((uint8_t)mode, le_gap_phy_1m)->result);
-#else
-        return ProcessResult(gecko_cmd_le_gap_discover((uint8_t)mode)->result);
-#endif
+        return ProcessResult(gecko_cmd_le_gap_start_discovery((uint8_t)phy, (uint8_t)mode)->result);
+    }
+
+    //! Stops the scanning process
+    errorcode_t StopScanning()
+    {
+        return ProcessResult(gecko_cmd_le_gap_end_procedure()->result);
     }
 
     //! Closes the specified connection
     errorcode_t CloseConnection(uint8_t connection)
     {
-#ifdef gecko_cmd_le_connection_close_id
         return ProcessResult(gecko_cmd_le_connection_close(connection)->result);
-#else
-        return ProcessResult(gecko_cmd_endpoint_close(connection)->result);
-#endif
     }
 
     /********** gatt **********/
@@ -485,7 +502,7 @@ private:
     static void ScheduleLL();
     static void ScheduleMain();
 
-    errorcode_t ProcessResult(uint16_t res)
+    DEBUG_NO_INLINE errorcode_t ProcessResult(uint16_t res)
     {
         // arguments are validated, there should never be an error result
         if (res)
@@ -500,5 +517,7 @@ private:
 
     friend class BluetoothConfig;
 };
+
+DEFINE_FLAG_ENUM(Bluetooth::PHY);
 
 extern Bluetooth bluetooth;

@@ -46,21 +46,13 @@ errorcode_t Bluetooth::StartAdvertising(Discoverable discover, Connectable conne
     {
         // reconfigure advertising
         advUpdate = false;
-#ifdef gecko_cmd_le_gap_set_advertise_timing_id
         err = ProcessResult(gecko_cmd_le_gap_set_advertise_timing(0, advMin, advMax, advTimeout, advCount)->result);
         if (!err) err = ProcessResult(gecko_cmd_le_gap_set_advertise_channel_map(0, advChannels)->result);
-#else
-        err = ProcessResult(gecko_cmd_le_gap_set_adv_parameters(advMin, advMax, adbChannels)->result);
-#endif
     }
 
     if (!err)
     {
-#ifdef gecko_cmd_le_gap_start_advertising_id
         err = ProcessResult(gecko_cmd_le_gap_start_advertising(0, this->discover, this->connect)->result);
-#else
-        err = ProcessResult(gecko_cmd_le_gap_set_mode(this->discover, this->connect)->result);
-#endif
     }
 
     return err;
@@ -150,6 +142,9 @@ async_def()
                     MYDBG("bgbuf: total = %d, size = %d, free = %d, in = %d, out = %d",
                         BuffersTotal(), BufferSize(), BuffersAvailable(),
                         RxBuffersUsed(), TxBuffersUsed());
+
+                    gecko_cmd_le_gap_set_discovery_extended_scan_response(true);
+
                     initialized = true;
                     break;
                 }
@@ -248,11 +243,37 @@ async_def()
             case EVENT_CLASS(gecko_evt_le_gap_scan_response_id):
                 switch (id)
                 {
-                case EVENT_ID(gecko_evt_le_gap_scan_response_id):
+                case EVENT_ID(gecko_evt_le_gap_extended_scan_response_id):
                 {
-                    UNUSED auto &e = evt->data.evt_le_gap_scan_response;
-                    MYDBG("evt_le_gap_scan_response: %d, host %H (%d), bonding %d, RSSI %d, data %H",
-                        e.packet_type, Span(e.address), e.address_type, e.bonding, e.rssi, Span(e.data.data, e.data.len));
+                    auto &e = evt->data.evt_le_gap_extended_scan_response;
+
+                    if (callbacks)
+                    {
+                        Advertisement evt;
+                        evt.packetType = e.packet_type;
+                        evt.address = e.address;
+                        evt.addressType = (AddressType)e.address_type;
+                        evt.bonding = e.bonding;
+                        evt.phy = PHY(e.primary_phy);
+                        evt.phy2 = PHY(e.secondary_phy);
+                        evt.sid = e.adv_sid;
+                        evt.txPower = e.tx_power;
+                        evt.rssi = e.rssi;
+                        evt.channel = e.channel;
+                        evt.periodicInterval = e.periodic_interval;
+                        // store the data for the callback
+                        auto pData = e.data.len <= 32 ? MemPoolAlloc<32>() : malloc(e.data.len);
+                        memcpy(pData, e.data.data, e.data.len);
+                        evt.data = Span(pData, e.data.len);
+
+                        kernel::Task::Run(callbacks, &Callbacks::OnBluetoothAdvertisementReceived, evt)
+                            .OnComplete(GetDelegate((void(*)(void*,intptr_t))(e.data.len <= 32 ? MemPoolFree<32> : free), pData));
+                    }
+                    else
+                    {
+                        MYDBG("evt_le_gap_extended_scan_response: %d, host %-H (%d), bonding %d, phy %d/%d, SID %d, TX %d, RSSI %d, CH %d, ival %d, data %H",
+                            e.packet_type, Span(e.address), e.address_type, e.bonding, e.primary_phy, e.secondary_phy, e.adv_sid, e.tx_power, e.rssi, e.channel, e.periodic_interval, Span(e.data.data, e.data.len));
+                    }
                     break;
                 }
 
@@ -527,4 +548,19 @@ res_pair_t Bluetooth::SendNotificationImpl(uint32_t connectionAndCharacteristic,
         MYDBG("gecko_cmd_gatt_server_send_characteristic_notification: %d %04X %H = %s", connection, characteristic, data, GetErrorMessage(res->result));
     }
     return RES_PAIR(res->result, res->sent_len);
+}
+
+res_pair_t Bluetooth::Advertisement::GetFieldImpl(Span data, uint8_t field)
+{
+    while (data.Length() > 2)
+    {
+        auto len = data.Element<uint8_t>(0);
+        if (data.Element<uint8_t>(1) == field)
+        {
+            return data.Slice(2, 1 + len);
+        }
+        data = data.RemoveLeft(1 + len);
+    }
+
+    return Span();
 }
