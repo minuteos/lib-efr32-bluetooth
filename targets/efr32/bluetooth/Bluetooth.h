@@ -185,7 +185,7 @@ public:
         Span GetField(uint8_t field) const { return GetFieldImpl(data, field); }
 
     private:
-        static res_pair_t GetFieldImpl(Span s, uint8_t field);
+        static RES_PAIR_DECL(GetFieldImpl, Span s, uint8_t field);
     };
 
     struct Callbacks
@@ -511,9 +511,9 @@ private:
         return (errorcode_t)res;
     }
 
-    ALWAYS_INLINE res_pair_t SendNotificationImpl(uint32_t connection, uint32_t characteristic, Span data)
+    ALWAYS_INLINE RES_PAIR_DECL(SendNotificationImpl, uint32_t connection, uint32_t characteristic, Span data)
         { return SendNotificationImpl((connection << 16) | (characteristic & 0xFFFF), data); }
-    res_pair_t SendNotificationImpl(uint32_t connectionAndCharacteristic, Span data);
+    RES_PAIR_DECL(SendNotificationImpl, uint32_t connectionAndCharacteristic, Span data);
 
     friend class BluetoothConfig;
 };
