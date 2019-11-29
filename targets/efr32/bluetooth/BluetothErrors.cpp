@@ -12,7 +12,7 @@
 
 #include <base/format.h>
 
-static const char* s_errors1[] = { "invalid_conn_handle", "waiting_response", "get_connection_timeout" };
+static const char* s_errors1[] = { "invalid_conn_handle", "waiting_response", "gatt_connection_timeout" };
 static const char* s_errors1x[] = { "invalid_param", "wrong_state", "out_of_memory", "not_implemented", "invalid_command", "timeout", "not_connected", "flow", "user_attribute", "invalid_license_key", "command_too_long", "out_of_bounds", "unspecified", "hardware", "buffers_full", "disconnected", "too_many_requests", "not_supported", "no_bonding", "crypto", "data_corrupted", "command_complete" };
 static const char* s_errors2[] = {
     /* 01-0F */ NULL, "unknown_connection_identifier", NULL, "page_timeout", "authentication_failure", "pin_or_key_missing", "memory_capacity_exceeded", "connection_timeout", "connection_limit_exceeded", "synchronous_connection_limit_exceeded", "acl_connection_already_exists", "command_disallowed", "connection_rejected_due_to_limited_resources", "connection_rejected_due_to_security_reasons", "connection_rejected_due_to_unacceptable_bd_addr",

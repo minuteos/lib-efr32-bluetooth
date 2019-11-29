@@ -15,6 +15,7 @@
 #include <kernel/platform.h>
 
 #include <base/Span.h>
+#include <base/UuidLE.h>
 
 #ifndef BLUETOOTH_MAX_CONNECTIONS
 #define BLUETOOTH_MAX_CONNECTIONS	4
@@ -76,8 +77,6 @@ static inline struct gecko_msg_test_debug_counter_rsp_t* gecko_cmd_test_debug_co
 class Bluetooth
 {
 public:
-    /********** EXTERNAL EVENTS **********/
-
     enum struct Security
     {
         None,
@@ -96,21 +95,13 @@ public:
 
     enum PHY
     {
+        PHYUnknown = 0,
         PHY1M = le_gap_phy_1m,
         PHY2M = le_gap_phy_2m,
         PHYCoded = le_gap_phy_coded,
     };
 
     DECLARE_FLAG_ENUM(PHY);
-
-    struct AttributeValueChanged
-    {
-        uint8_t connection;
-        uint8_t opcode;
-        uint16_t attribute;
-        uint32_t offset;
-        Span value;
-    };
 
     enum struct AttError : uint8_t
     {
@@ -135,11 +126,171 @@ public:
         ApplicationError0 = 0x80,
     };
 
+    class Service
+    {
+        uint32_t handle;
+
+    public:
+        constexpr Service(uint32_t handle = 0)
+            : handle(handle) {}
+
+        constexpr operator uint32_t() const { return handle; }
+
+        friend class Bluetooth;
+    };
+
+    class Attribute
+    {
+        uint16_t handle;
+
+    public:
+        constexpr Attribute(uint16_t handle = 0)
+            : handle(handle) {}
+
+        constexpr operator uint16_t() const { return handle; }
+
+        friend class Bluetooth;
+    };
+
+    class Characteristic : public Attribute
+    {
+    public:
+        constexpr Characteristic(uint16_t handle = 0)
+            : Attribute(handle) {}
+    };
+
+    class Descriptor : public Attribute
+    {
+    public:
+        constexpr Descriptor(uint16_t handle)
+            : Attribute(handle) {}
+    };
+
+    class CharacteristicWithProperties
+    {
+        union
+        {
+            struct
+            {
+                uint16_t handle;
+                uint16_t properties;
+            };
+            uint32_t raw;
+        };
+
+        constexpr CharacteristicWithProperties(uint16_t handle, uint16_t properties)
+            : handle(handle), properties(properties) {}
+
+    public:
+        constexpr CharacteristicWithProperties(uint32_t raw = 0)
+            : raw(raw) {}
+
+        constexpr operator Characteristic() const { return handle; }
+        constexpr operator uint32_t() const { return raw; }
+
+        friend class Bluetooth;
+    };
+
+    class Connection
+    {
+        union
+        {
+            struct
+            {
+                uint16_t error : 15;
+                uint16_t isError : 1;
+            };
+            struct
+            {
+                uint8_t id;
+                uint8_t seq;
+            };
+            uint16_t raw;
+        };
+
+        constexpr Connection(uint8_t id, uint8_t seq)
+            : id(id), seq(seq) {}
+
+        constexpr Connection(bool isError, uint16_t error)
+            : error(error), isError(error) {}
+
+        constexpr static Connection Error(uint16_t error) { return Connection(!!error, error); }
+
+    public:
+        constexpr Connection(uint16_t rawValue = 0)
+            : raw(rawValue) {}
+
+        constexpr operator uint16_t() const { return isError ? 0 : id; }
+
+        async(Close);
+
+        friend class Bluetooth;
+    };
+
+    class IncomingConnection : public Connection
+    {
+        constexpr IncomingConnection(uint8_t id, uint8_t seq)
+            : Connection(id, seq) {}
+
+        constexpr IncomingConnection(Connection conn)
+            : Connection(conn) {}
+
+    public:
+        constexpr IncomingConnection(uint16_t rawValue = 0)
+            : Connection(rawValue) {}
+
+        async(SendNotification, Characteristic characteristic, Span value);
+
+        friend class Bluetooth;
+    };
+
+    class OutgoingConnection : public Connection
+    {
+        constexpr OutgoingConnection(uint8_t id, uint8_t seq)
+            : Connection(id, seq) {}
+
+        constexpr OutgoingConnection(Connection conn)
+            : Connection(conn) {}
+
+    public:
+        constexpr OutgoingConnection(uint16_t rawValue = 0)
+            : Connection(rawValue) {}
+
+        //! Registers a handler for handling an attribute (characteristic or descriptor) event
+        template<typename T> void RegisterHandler(Attribute attribute, T&& handler);
+        //! Registers a handler for handling an attribute (characteristic or descriptor) event
+        template<typename TTarget, typename THandler> void RegisterHandler(Attribute attribute, TTarget&& target, THandler&& handler)
+            { RegisterHandler(attribute, GetDelegate(std::forward<TTarget>(target), std::forward<THandler>(handler))); }
+
+        async(DiscoverService, const UuidLE& uuid);
+        async(DiscoverCharacteristic, Service service, const UuidLE& uuid);
+
+        async(EnableNotifications, Characteristic characteristic);
+        async(DisableNotifications, Characteristic characteristic);
+
+        async(Read, Characteristic characteristic, Buffer value);
+        async(Write, Characteristic characteristic, Span value);
+        async(WriteWithoutResponse, Characteristic characteristic, Span value);
+
+        errorcode_t GetLastError() const;
+
+        friend class Bluetooth;
+    };
+
+    struct AttributeValueChanged
+    {
+        IncomingConnection connection;
+        Attribute attribute;
+        uint8_t opcode;
+        uint32_t offset;
+        Span value;
+    };
+
     struct CharacteristicReadRequest
     {
-        uint8_t connection;
+        IncomingConnection connection;
+        Characteristic characteristic;
         uint8_t opcode;
-        uint16_t characteristic;
         uint32_t offset;
 
         void Success(Span data) { Respond(data, AttError::OK); }
@@ -149,9 +300,9 @@ public:
 
     struct CharacteristicWriteRequest
     {
-        uint8_t connection;
+        IncomingConnection connection;
+        Characteristic characteristic;
         uint8_t opcode;
-        uint16_t characteristic;
         uint32_t offset;
         Span data;
 
@@ -163,9 +314,17 @@ public:
     enum struct EventLevel : uint8_t { Disabled, Notification, Indication };
     struct CharacteristicEventRequest
     {
-        uint8_t connection;
+        IncomingConnection connection;
         EventLevel level;
-        uint16_t characteristic;
+        Characteristic characteristic;
+    };
+
+    struct CharacteristicNotification
+    {
+        OutgoingConnection connection;
+        Characteristic characteristic;
+        Span data;
+        uint16_t offset;
     };
 
     struct Advertisement
@@ -188,48 +347,50 @@ public:
         static RES_PAIR_DECL(GetFieldImpl, Span s, uint8_t field);
     };
 
-    struct Callbacks
-    {
-        virtual async(OnBluetoothAttributeValueChanged, AttributeValueChanged e) async_def_return(0);
-        virtual async(OnBluetoothCharacteristicReadRequest, CharacteristicReadRequest e) async_def_return(0);
-        virtual async(OnBluetoothCharacteristicWriteRequest, CharacteristicWriteRequest e) async_def_return(0);
-        virtual async(OnBluetoothCharacteristicEventRequest, CharacteristicEventRequest e) async_def_return(0);
-        virtual async(OnBluetoothAdvertisementReceived, Advertisement e) async_def_return(0);
-    };
+    typedef AsyncDelegate<Advertisement&> ScannerDelegate;
 
-    /**** BUFFER STATUS ****/
-private:
-    union BufferCounts
-    {
-        uint32_t raw;
-        struct {
-            uint8_t in, out, noFlow;
-        };
-    };
-    union BufferCounts BufferCounts() const { return (union BufferCounts){ gecko_cmd_test_debug_counter(21)->value }; }
+    //! Registers a scanner (handler for advertisements)
+    void RegisterScanner(ScannerDelegate scanner)
+        { scanners.Push(scanner); }
+    template<typename TTarget, typename THandler> void RegisterScanner(TTarget&& target, THandler&& handler)
+        { RegisterScanner(GetDelegate(std::forward<TTarget>(target), std::forward<THandler>(handler))); }
 
-public:
-    //! Sets the callbacks implementation for various events
-    void SetCallbacks(Callbacks* callbacks) { this->callbacks = callbacks; }
+    //! Registers a handler for handling an attribute (characteristic or descriptor)
+    template<typename T> void RegisterHandler(Attribute attribute, T&& handler)
+        { RegisterHandler(handlers, AttributeHandler(attribute, std::forward<T>(handler))); }
+    //! Registers a handler for handling an attribute (characteristic or descriptor)
+    template<typename TTarget, typename THandler> void RegisterHandler(Attribute attribute, TTarget&& target, THandler&& handler)
+        { RegisterHandler(attribute, GetDelegate(std::forward<TTarget>(target), std::forward<THandler>(handler))); }
+
+    //! Registers standard handler for the Gecko OTA Control characteristic
+    void RegisterGeckoOTAControlHandler(Characteristic characteristic)
+        { RegisterHandler(characteristic, this, &Bluetooth::GeckoOTAControlWriteHandler); }
+    //! Registers standard handler for the Gecko OTA Version characteristic
+    void RegisterGeckoOTAVersionHandler(Characteristic characteristic)
+        { RegisterHandler(characteristic, this, &Bluetooth::GeckoOTAVersionReadHandler); }
+    //! Registers standard handler for retrieving System ID
+    void RegisterSystemIDHandler(Characteristic characteristic)
+        { RegisterHandler(characteristic, this, &Bluetooth::SystemIDReadHandler); }
+
     //! Initializes the Bluetooth stack and waits until the startup is complete
     async(Init);
     //! Returns true if the Bluetooth stack initialization is complete
-    bool Initialized() const { return initialized; }
+    bool Initialized() const { return !!(flags & Flags::Initialized); }
 
     //! Gets a bit mask determining active connections
     uint32_t Connections() const { return connections; }
     //! Gets the current security level of the specified connection
-    Security ConnectionSecurity(uint32_t connection) const { return GETBIT(connections, connection) ? connInfo[connection].security : Security::None; }
+    Security ConnectionSecurity(Connection connection) const { return GetConnectionInfo(connection)->security; }
     //! Gets the current MTU of the specified connection
-    int ConnectionMTU(uint32_t connection) const { return GETBIT(connections, connection) ? connInfo[connection].mtu : 0; }
+    size_t ConnectionMTU(Connection connection) const { return GetConnectionInfo(connection)->mtu; }
     //! Gets maximum allowed notification size for the specified connection
-    int ConnectionMaxNotification(uint32_t connection) const { return ConnectionMTU(connection) - 3; }
+    size_t ConnectionMaxNotification(Connection connection) const { return ConnectionMTU(connection) - 3; }
     //! Gets the maximum allowed read payload size for the specified connection
-    int ConnectionMaxReadResponse(uint32_t connection) const { return ConnectionMTU(connection) - 1; }
+    size_t ConnectionMaxReadResponse(Connection connection) const { return ConnectionMTU(connection) - 1; }
     //! Gets the maximum allowed write payload size for the specified connection
-    int ConnectionMaxWrite(uint32_t connection) const { return ConnectionMTU(connection) - 5; }
+    size_t ConnectionMaxWrite(Connection connection) const { return ConnectionMTU(connection) - 5; }
     //! Gets the maximum allowed write without response payload size for the specified connection
-    int ConnectionMaxWriteNoResponse(uint32_t connection) const { return ConnectionMTU(connection) - 3; }
+    size_t ConnectionMaxWriteNoResponse(Connection connection) const { return ConnectionMTU(connection) - 3; }
 
     //! Gets the total number of I/O buffers used by the Bluetooth stack
     int BuffersTotal() const { return ioBuffers; }
@@ -308,7 +469,7 @@ public:
         ASSERT(max >= 0x20 && max <= 0x4000);
         advMin = min;
         advMax = max;
-        advUpdate = true;
+        flags |= Flags::AdvUpdate;
     }
 
     //! Configures the channels used for advertising
@@ -316,7 +477,7 @@ public:
     {
         ASSERT(!(channelMask & 7));
         advChannels = channelMask;
-        advUpdate = true;
+        flags |= Flags::AdvUpdate;
     }
 
     //! Configures advertisement timeout (time after which advertising stops)
@@ -324,18 +485,31 @@ public:
     {
         ASSERT(t >= 0 && t <= 655.35f);
         advTimeout = t * 100;
-        advUpdate = true;
+        flags |= Flags::AdvUpdate;
     }
 
     //! Configures number of advertisements sent before stopping
     void SetAdvertisementCount(uint8_t count)
     {
         advCount = count;
-        advUpdate = true;
+        flags |= Flags::AdvUpdate;
     }
 
     //! Starts advertising
-    errorcode_t StartAdvertising(Discoverable discover, Connectable connect, bool keep = false);
+    void StartAdvertising(Discoverable discover, Connectable connect, bool keep = false)
+    {
+        advDiscover = (uint8_t)discover;
+        advConnect = (uint8_t)connect;
+        flags = (flags & ~Flags::KeepDiscoverable) | Flags::AdvertisingRequested | (keep * Flags::KeepDiscoverable);
+        UpdateBackgroundProcess();
+    }
+
+    //! Stops advertising
+    void StopAdvertising()
+    {
+        flags &= ~Flags::AdvertisingRequested;
+        UpdateBackgroundProcess();
+    }
 
     //! Configures the preferred and accepted PHYs to be used for connections
     errorcode_t SetConnectionPHY(PHY preferred, PHY accepted)
@@ -381,22 +555,27 @@ public:
     }
 
     //! Starts the scanning process
-    errorcode_t StartScanning(ScanMode mode, PHY phy = PHY1M)
+    void StartScanning(ScanMode mode, PHY phy = PHY1M)
     {
-        return ProcessResult(gecko_cmd_le_gap_start_discovery((uint8_t)phy, (uint8_t)mode)->result);
+        flags |= Flags::ScanningRequested | Flags::ScanUpdate;
+        scanMode = (uint8_t)mode;
+        scanPhy = (uint8_t)phy;
+        UpdateBackgroundProcess();
     }
 
     //! Stops the scanning process
-    errorcode_t StopScanning()
+    void StopScanning()
     {
-        return ProcessResult(gecko_cmd_le_gap_end_procedure()->result);
+        flags &= ~Flags::ScanningRequested;
+        UpdateBackgroundProcess();
     }
 
-    //! Closes the specified connection
-    errorcode_t CloseConnection(uint8_t connection)
-    {
-        return ProcessResult(gecko_cmd_le_connection_close(connection)->result);
-    }
+    //! Tries to connect to the peripheral with the specified address
+    //! @returns A valid @ref OutgoingConnection object if connection succeeded
+    async(Connect, bd_addr address, mono_t timeout, PHY phy = PHY1M);
+
+    //! Closes an active connection
+    async(CloseConnection, Connection connection);
 
     /********** gatt **********/
 
@@ -419,6 +598,18 @@ public:
         sent = RES_PAIR_SECOND(packed);
         return (errorcode_t)RES_PAIR_FIRST(packed);
     }
+
+    async(DiscoverService, OutgoingConnection connection, const UuidLE& uuid);
+    async(DiscoverCharacteristic, OutgoingConnection connection, Service service, const UuidLE& uuid);
+    async(SetCharacteristicNotification, OutgoingConnection connection, Characteristic characteristic, gatt_client_config_flag flags);
+    async(EnableNotifications, OutgoingConnection connection, Characteristic characteristic)
+        { return async_forward(SetCharacteristicNotification, connection, characteristic, gatt_notification); }
+    async(DisableNotifications, OutgoingConnection connection, Characteristic characteristic)
+        { return async_forward(SetCharacteristicNotification, connection, characteristic, gatt_disable); }
+    async(ReadCharacteristic, OutgoingConnection connection, Characteristic characteristic, Buffer buffer);
+    async(WriteCharacteristic, OutgoingConnection connection, Characteristic characteristic, Span data);
+    async(WriteCharacteristicWithoutResponse, OutgoingConnection connection, Characteristic characteristic, Span data);
+    async(SendCharacteristicNotification, IncomingConnection connection, Characteristic characteristic, Span data);
 
     /********** sm (Security Manager) **********/
 
@@ -463,38 +654,196 @@ public:
     static const char* GetErrorMessage(uint32_t err);
 
 private:
-    bool initialized = false;               //< Set to true once the stack initialization is complete
-    bool keepDiscoverable = false;          //< Whether to keep advertising even while a connection is open
-    bool event = false, llEvent = false;    //< Signals for event handling tasks
-    uint8_t discover = 0;                   //< Current discoverability mode
-    uint8_t connect = 0;                    //< Current connectability mode
-    bool advUpdate = true;                  //< If the advertisement parameters have changed
+
+    union BufferCounts
+    {
+        uint32_t raw;
+        struct {
+            uint8_t in, out, noFlow;
+        };
+    };
+    union BufferCounts BufferCounts() const { return (union BufferCounts){ gecko_cmd_test_debug_counter(21)->value }; }
+
+    enum struct Flags : uint32_t
+    {
+        None = 0,
+        Initialized = BIT(0),               //< Set to true once the stack initialization is complete
+        KeepDiscoverable = BIT(1),          //< Whether to keep advertising even while a connection is open
+        AdvUpdate = BIT(2),                 //< Advertisement parameters have changed
+        ScanUpdate = BIT(3),                //< Scanning parameters have changed
+        Connecting = BIT(4),                //< An outgoing connection is currently pending
+        ScanningRequested = BIT(5),         //< Scanning for advertisements is requested
+        ScanningActive = BIT(6),            //< Scanning for advertisements is currently active
+        AdvertisingRequested = BIT(7),      //< Advertising is requested
+        AdvertisingActive = BIT(8),         //< Advertising is currently active
+
+        ScanningRequestedAndActive = ScanningRequested | ScanningActive,
+    };
+
+    DECLARE_FLAG_ENUM(Flags);
+
+    enum struct AttributeHandlerType : uint16_t
+    {
+        ValueChange,
+        ReadRequest,
+        WriteRequest,
+        EventRequest,
+        Notification,
+    };
+
+    struct AttributeHandler
+    {
+        constexpr AttributeHandler(Attribute attribute, AsyncDelegate<AttributeValueChanged&> delegate)
+            : attribute(attribute), type(AttributeHandlerType::ValueChange), valueChange(delegate) {}
+        constexpr AttributeHandler(Attribute attribute, AsyncDelegate<CharacteristicReadRequest&> delegate)
+            : attribute(attribute), type(AttributeHandlerType::ReadRequest), read(delegate) {}
+        constexpr AttributeHandler(Attribute attribute, AsyncDelegate<CharacteristicWriteRequest&> delegate)
+            : attribute(attribute), type(AttributeHandlerType::WriteRequest), write(delegate) {}
+        constexpr AttributeHandler(Attribute attribute, AsyncDelegate<CharacteristicEventRequest&> delegate)
+            : attribute(attribute), type(AttributeHandlerType::EventRequest), eventRequest(delegate) {}
+        constexpr AttributeHandler(Attribute attribute, AsyncDelegate<CharacteristicNotification&> delegate)
+            : attribute(attribute), type(AttributeHandlerType::Notification), notification(delegate) {}
+
+        Attribute attribute;
+        AttributeHandlerType type;
+        union
+        {
+            AsyncDelegate<AttributeValueChanged&> valueChange;
+            AsyncDelegate<CharacteristicReadRequest&> read;
+            AsyncDelegate<CharacteristicWriteRequest&> write;
+            AsyncDelegate<CharacteristicEventRequest&> eventRequest;
+            AsyncDelegate<CharacteristicNotification&> notification;
+        };
+    };
+
+    Flags flags = Flags::None;              //< Various state flags, see above
+    bool event = false;                     //< Event handler trigger from stack
+    bool llEvent = false;                   //< Event handler trigger from interrupt
+    uint8_t advDiscover = 0;                //< Advertised discoverability mode
+    uint8_t advConnect = 0;                 //< Advertised connectability mode
     uint8_t advChannels = 7;                //< Advertising channel mask
     uint32_t advMin = 160, advMax = 160;    //< Advertising interval
-#ifdef gecko_cmd_le_gap_set_advertise_timing_id
     uint16_t advTimeout = 0;                //< Advertisement timeout
     uint8_t advCount = 0;                   //< Advertisement count limit
-#endif
+    uint8_t scanMode;                       //< Scanning mode
+    uint8_t scanPhy;                        //< Scanning PHY
     uint32_t connections = 0;               //< Active connections mask
-#ifdef gattdb_ota_control
-    uint32_t dfuConnection = 0;             //< Connection requesting DFU reset
-#endif
     int ioBuffers;                          //< Total count of I/O buffers
     int bufferSize;                         //< I/O buffer size
-    Callbacks *callbacks = NULL;            //< Callbacks
+    LinkedList<AttributeHandler> handlers;
+    LinkedList<ScannerDelegate> scanners;
+
+    async(CallScanners, Advertisement& advert);
+
+    enum struct ConnectionFlags : uint8_t
+    {
+        Connecting = BIT(0),
+        Connected = BIT(1),
+        Master = BIT(2),
+        Procedure = BIT(3),
+        ProcedureRunning = BIT(4),
+#ifdef gattdb_ota_control
+        DfuResetRequested = BIT(7),
+#endif
+    };
+
+    DECLARE_FLAG_ENUM(ConnectionFlags);
+
+    enum struct GattProcedure
+    {
+        Idle,
+
+        // master / OutgoingConnection procedures
+        Connection,
+        DiscoverService,
+        DiscoverCharacteristic,
+        SetCharacteristicNotification,
+        ReadCharacteristic,
+        WriteCharacteristic,
+        WriteCharacteristicWithoutResponse,
+
+        // slave / IncomingConnection procedures
+        SendCharacteristicNotification,
+    };
+
+    struct ReadOperation
+    {
+        Buffer buffer;
+        uint32_t read;
+    };
+
+    struct WriteOperation
+    {
+        Span value;
+        uint32_t written;
+    };
 
     struct ConnectionInfo
     {
+        struct
+        {
+            union
+            {
+                OutgoingConnection* connect;
+                Service* service;
+                CharacteristicWithProperties* characteristic;
+                ReadOperation* read;
+                WriteOperation* write;
+                void* ptr;
+            };
+            GattProcedure type;
+        } procedure;
+
+        LinkedList<AttributeHandler> handlers;
+
+        uint16_t error;
+        uint16_t seq;
         uint32_t start;
-        uint16_t interval, latency, timeout, mtu, txsize;
+        uint16_t mtu;
+        uint16_t interval, latency, timeout, txsize;
+        ConnectionFlags flags;
         Security security;
         int8_t bonding;
-        bool master;
+        int8_t rssi;
+        PHY phy;
         bd_addr address;
         AddressType addressType;
 
-        void UpdateConnectionParams();
-    } connInfo[BLUETOOTH_MAX_CONNECTIONS + 1] = {0};	// connection numbers are one-based
+        void EndProcedure();
+    } connectionInfo[BLUETOOTH_MAX_CONNECTIONS] = {};	// connection numbers are one-based
+
+    ALWAYS_INLINE uint8_t GetConnectionIndex(const ConnectionInfo* con) const
+    {
+        ASSERT(con >= connectionInfo && con < endof(connectionInfo));
+        return con - connectionInfo + 1;
+    }
+
+    ALWAYS_INLINE const ConnectionInfo* GetConnectionInfo(uint8_t id) const
+    {
+        ASSERT(id > 0 && id <= BLUETOOTH_MAX_CONNECTIONS);
+        return &connectionInfo[id - 1];
+    }
+
+    ALWAYS_INLINE ConnectionInfo* GetConnectionInfo(uint8_t id)
+    {
+        ASSERT(id > 0 && id <= BLUETOOTH_MAX_CONNECTIONS);
+        return &connectionInfo[id - 1];
+    }
+
+    ALWAYS_INLINE const ConnectionInfo* GetConnectionInfo(Connection con) const
+    {
+        ASSERT(con.id > 0 && con.id <= BLUETOOTH_MAX_CONNECTIONS);
+        return &connectionInfo[con.id - 1];
+    }
+
+    ALWAYS_INLINE ConnectionInfo* GetConnectionInfo(Connection con)
+    {
+        ASSERT(con.id > 0 && con.id <= BLUETOOTH_MAX_CONNECTIONS);
+        return &connectionInfo[con.id - 1];
+    }
+
+    static void RegisterHandler(LinkedList<AttributeHandler>& handlers, AttributeHandler handler);
+    static AttributeHandler* FindHandler(LinkedList<AttributeHandler> handlers, Attribute attribute, AttributeHandlerType type);
 
     async(Task);
     async(LLTask);
@@ -515,9 +864,42 @@ private:
         { return SendNotificationImpl((connection << 16) | (characteristic & 0xFFFF), data); }
     RES_PAIR_DECL(SendNotificationImpl, uint32_t connectionAndCharacteristic, Span data);
 
+    async(BeginProcedure, OutgoingConnection connection, GattProcedure procedure);
+    async(CloseConnectionImpl, ConnectionInfo* connection, ConnectionFlags activeFlag);
+
+    async(GeckoOTAControlWriteHandler, CharacteristicWriteRequest& e);
+    async(GeckoOTAVersionReadHandler, CharacteristicReadRequest& e);
+    async(SystemIDReadHandler, CharacteristicReadRequest& e);
+
+    void UpdateBackgroundProcess();
+
     friend class BluetoothConfig;
 };
 
 DEFINE_FLAG_ENUM(Bluetooth::PHY);
+DEFINE_FLAG_ENUM(Bluetooth::Flags);
+DEFINE_FLAG_ENUM(Bluetooth::ConnectionFlags);
 
 extern Bluetooth bluetooth;
+
+template<typename T> ALWAYS_INLINE void Bluetooth::OutgoingConnection::RegisterHandler(Attribute attribute, T&& handler)
+    { return Bluetooth::RegisterHandler(bluetooth.GetConnectionInfo(id)->handlers, AttributeHandler(attribute, std::forward<T>(handler))); }
+
+ALWAYS_INLINE async(Bluetooth::OutgoingConnection::DiscoverService, const UuidLE& uuid)
+    { return async_forward(bluetooth.DiscoverService, *this, uuid); }
+ALWAYS_INLINE async(Bluetooth::OutgoingConnection::DiscoverCharacteristic, Service service, const UuidLE& uuid)
+    { return async_forward(bluetooth.DiscoverCharacteristic, *this, service, uuid); }
+ALWAYS_INLINE async(Bluetooth::OutgoingConnection::EnableNotifications, Characteristic characteristic)
+    { return async_forward(bluetooth.EnableNotifications, *this, characteristic); }
+ALWAYS_INLINE async(Bluetooth::OutgoingConnection::DisableNotifications, Characteristic characteristic)
+    { return async_forward(bluetooth.DisableNotifications, *this, characteristic); }
+ALWAYS_INLINE async(Bluetooth::OutgoingConnection::Read, Characteristic characteristic, Buffer buffer)
+    { return async_forward(bluetooth.ReadCharacteristic, *this, characteristic, buffer); }
+ALWAYS_INLINE async(Bluetooth::OutgoingConnection::Write, Characteristic characteristic, Span value)
+    { return async_forward(bluetooth.WriteCharacteristic, *this, characteristic, value); }
+ALWAYS_INLINE async(Bluetooth::OutgoingConnection::WriteWithoutResponse, Characteristic characteristic, Span value)
+    { return async_forward(bluetooth.WriteCharacteristicWithoutResponse, *this, characteristic, value); }
+ALWAYS_INLINE async(Bluetooth::IncomingConnection::SendNotification, Characteristic characteristic, Span value)
+    { return async_forward(bluetooth.SendCharacteristicNotification, *this, characteristic, value); }
+ALWAYS_INLINE async(Bluetooth::Connection::Close)
+    { return async_forward(bluetooth.CloseConnection, *this); }

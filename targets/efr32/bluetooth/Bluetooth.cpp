@@ -8,9 +8,11 @@
 
 #include "Bluetooth.h"
 
+#include <application_properties.h>
 #include <rail.h>
 
 #define MYDBG(...)  DBGCL("bluetooth", __VA_ARGS__)
+#define CONDBG(con, fmt, ...)    DBGCL("bluetooth", "[%d] " fmt, GetConnectionIndex(con), ## __VA_ARGS__)
 
 Bluetooth bluetooth;
 
@@ -35,27 +37,73 @@ struct BluetoothConfig : gecko_configuration_t
     }
 };
 
-errorcode_t Bluetooth::StartAdvertising(Discoverable discover, Connectable connect, bool keep)
+void Bluetooth::UpdateBackgroundProcess()
 {
-    this->discover = (uint8_t)discover;
-    this->connect = (uint8_t)connect;
-    keepDiscoverable = keep;
+    // we don't want to modify the actual flags
+    auto flags = this->flags;
 
-    errorcode_t err = bg_err_success;
-    if (advUpdate)
+    if (!(flags & Flags::Initialized))
     {
-        // reconfigure advertising
-        advUpdate = false;
-        err = ProcessResult(gecko_cmd_le_gap_set_advertise_timing(0, advMin, advMax, advTimeout, advCount)->result);
-        if (!err) err = ProcessResult(gecko_cmd_le_gap_set_advertise_channel_map(0, advChannels)->result);
+        return;
     }
 
-    if (!err)
+    if (!!(flags & Flags::Connecting))
     {
-        err = ProcessResult(gecko_cmd_le_gap_start_advertising(0, this->discover, this->connect)->result);
+        // scanning and advertising must be disabled while connecting, otherwise the stack gets completely confused
+        flags &= ~(Flags::AdvertisingRequested | Flags::ScanningRequested);
+    }
+    else if (connections && !(flags & Flags::KeepDiscoverable))
+    {
+        // do not advertise while connections are active
+        flags &= ~Flags::AdvertisingRequested;
     }
 
-    return err;
+    switch (flags & (Flags::AdvertisingActive | Flags::AdvertisingRequested))
+    {
+        case Flags::AdvertisingActive:
+            ProcessResult(gecko_cmd_le_gap_stop_advertising(0)->result);
+            this->flags &= ~Flags::AdvertisingActive;
+            break;
+
+        case Flags::AdvertisingRequested:
+            if (!!(flags & Flags::AdvUpdate))
+            {
+                // reconfigure advertising
+                ProcessResult(gecko_cmd_le_gap_set_advertise_timing(0, advMin, advMax, advTimeout, advCount)->result);
+                ProcessResult(gecko_cmd_le_gap_set_advertise_channel_map(0, advChannels)->result);
+            }
+            ProcessResult(gecko_cmd_le_gap_start_advertising(0, advDiscover, advConnect)->result);
+            this->flags = (this->flags & ~Flags::AdvUpdate) | Flags::AdvertisingActive;
+            break;
+
+        default:
+            break;
+    }
+
+    switch (flags & (Flags::ScanningActive | Flags::ScanningRequested))
+    {
+        case Flags::ScanningActive:
+            ProcessResult(gecko_cmd_le_gap_end_procedure()->result);
+            this->flags &= ~Flags::ScanningActive;
+            break;
+
+        case Flags::ScanningActive | Flags::ScanningRequested:
+            if (!(flags & Flags::ScanUpdate))
+            {
+                break;
+            }
+            // parameters updated, restart scanning
+            ProcessResult(gecko_cmd_le_gap_end_procedure()->result);
+            // fallthrough...
+
+        case Flags::ScanningRequested:
+            ProcessResult(gecko_cmd_le_gap_start_discovery(scanPhy, scanMode)->result);
+            this->flags = (this->flags & ~Flags::ScanUpdate) | Flags::ScanningActive;
+            break;
+
+        default:
+            break;
+    }
 }
 
 async(Bluetooth::Init)
@@ -86,7 +134,7 @@ async_def()
     kernel::Task::Run(this, &Bluetooth::Task);
     kernel::Task::Run(this, &Bluetooth::LLTask);
 
-    await_signal(initialized);
+    await_mask_not(flags, Flags::Initialized, 0);
 }
 async_end
 
@@ -108,12 +156,59 @@ async_def()
 {
     for (;;)
     {
-        await_signal(llEvent);
-        llEvent = false;
+        await_acquire_zero(llEvent, 1);
         gecko_priority_handle();
     }
 }
 async_end
+
+struct CreateCallbackDataRequest
+{
+    uint8_t dataLength;
+    uint8_t eventLength;
+    uint16_t dataSpanOffset;
+};
+
+static void* CreateCallbackData(CreateCallbackDataRequest req, const void* event, const void* data, Delegate<void, intptr_t>* pOnComplete)
+{
+    auto len = req.eventLength + req.dataLength;
+    void* copy;
+    void (*pFree)(void*,intptr_t);
+    if (len <= 32)
+    {
+        copy = MemPoolAlloc<32>();
+        pFree = (decltype(pFree))MemPoolFree<32>;
+    }
+    else if (len <= 64)
+    {
+        copy = MemPoolAlloc<64>();
+        pFree = (decltype(pFree))MemPoolFree<64>;
+    }
+    else
+    {
+        copy = malloc(len);
+        pFree = (decltype(pFree))free;
+    }
+    memcpy(copy, event, req.eventLength);
+    memcpy((uint8_t*)copy + req.eventLength, data, req.dataLength);
+    *(Span*)((uint8_t*)copy + req.dataSpanOffset) = Span((uint8_t*)copy + req.eventLength, req.dataLength);
+    *pOnComplete = GetDelegate(pFree, copy);
+    return copy;
+}
+
+template<typename TCallback> static void RunCallback(AsyncDelegate<TCallback&> delegate, const TCallback& cbk)
+{
+    TCallback* copy = MemPoolAlloc<TCallback>();
+    memcpy(copy, &cbk, sizeof(TCallback));
+    kernel::Task::Run(delegate, *copy).OnComplete(GetDelegate((void(*)(void*,intptr_t))MemPoolFree<TCallback>, (void*)copy));
+}
+
+template<typename TCallback> static void RunCallback(AsyncDelegate<TCallback&> delegate, const TCallback& cbk, Span& callbackData, const uint8array& data)
+{
+    Delegate<void, intptr_t> onComplete;
+    auto copy = CreateCallbackData({ data.len, sizeof(TCallback), (uint16_t)((intptr_t)&callbackData - (intptr_t)&cbk) }, &cbk, data.data, &onComplete);
+    kernel::Task::Run(delegate, *(TCallback*)copy).OnComplete(onComplete);
+}
 
 async(Bluetooth::Task)
 async_def()
@@ -145,7 +240,8 @@ async_def()
 
                     gecko_cmd_le_gap_set_discovery_extended_scan_response(true);
 
-                    initialized = true;
+                    flags |= Flags::Initialized;
+                    UpdateBackgroundProcess();
                     break;
                 }
 
@@ -161,25 +257,36 @@ async_def()
                 case EVENT_ID(gecko_evt_le_connection_opened_id):
                 {
                     auto &e = evt->data.evt_le_connection_opened;
-                    MYDBG("evt_le_connection_opened: %d, from %H (%d), %s, bonding %d",
-                        e.connection, Span(e.address), e.address_type, e.master ? "master" : "slave", (int8_t)e.bonding);
+                    MYDBG("evt_le_connection_opened: %d, %s %-H (%d), bonding %d",
+                        e.connection, e.master ? "to" : "from", Span(e.address), e.address_type, (int8_t)e.bonding);
 
-                    if (keepDiscoverable)
+                    SETBIT(connections, e.connection);
+
+                    // advertising automatically stops when a connection is open, restore what needs to be restored
+                    flags &= ~Flags::AdvertisingActive;
+                    UpdateBackgroundProcess();
+
+                    auto &ci = *GetConnectionInfo(e.connection);
+                    if (!!(ci.flags & ConnectionFlags::Connecting) && ci.procedure.type == GattProcedure::Connection && ci.procedure.connect && e.master)
                     {
-                        MYDBG("restoring advertising after connection opened");
-                        StartAdvertising((Discoverable)discover, (Connectable)connect, true);
+                        *ci.procedure.connect = OutgoingConnection(e.connection, ++ci.seq);
                     }
-
-                    auto &ci = connInfo[e.connection - 1];
-                    ci = {0};
+                    ci.flags = ConnectionFlags::Connected | (ConnectionFlags::Master * e.master);
+                    ci.error = 0;
+                    ci.procedure.type = GattProcedure::Idle;
+                    ci.procedure.ptr = NULL;
                     ci.start = MONO_CLOCKS;
-                    ci.master = e.master;
+                    ci.mtu = 23;
+                    ci.security = Security::None;
                     ci.bonding = e.bonding;
                     ci.address = e.address;
                     ci.addressType = (AddressType)e.address_type;
-                    ci.mtu = 23;
+                    ci.phy = PHYUnknown;
+                    ci.rssi = -128;
+                    ci.handlers.Clear();
 
-                    SETBIT(connections, e.connection);
+                    // these arrive later
+                    ci.interval = ci.latency = ci.timeout = ci.txsize = 0;
                     break;
                 }
 
@@ -189,25 +296,40 @@ async_def()
                     MYDBG("evt_le_connection_closed: %d, reason %s",
                         e.connection, GetErrorMessage(e.reason));
 
-                    if (keepDiscoverable || (!connections && (discover || connect)))
-                    {
-                        // restore advertising
-                        if (keepDiscoverable)
-                            MYDBG("restoring advertising after connection closed");
-                        else
-                            MYDBG("restoring advertising after last connection closed");
-                        StartAdvertising((Discoverable)discover, (Connectable)connect, keepDiscoverable);
-                    }
-
                     RESBIT(connections, e.connection);
+                    // restore advertising if requested
+                    UpdateBackgroundProcess();
 
+                    auto& ci = *GetConnectionInfo(e.connection);
 #ifdef gattdb_ota_control
-                    if (GETBIT(dfuConnection, e.connection))
+                    if (!!(ci.flags & ConnectionFlags::DfuResetRequested))
                     {
-                        MYDBG("...DFU reset");
+                        CONDBG(&ci, "...DFU reset");
                         gecko_cmd_system_reset(2);
                     }
 #endif
+                    if (!!(ci.flags & ConnectionFlags::Connecting))
+                    {
+                        CONDBG(&ci, "Connection aborted: %s", GetErrorMessage(e.reason));
+                        ci.error = e.reason;
+                        if (ci.procedure.type == GattProcedure::Connection && ci.procedure.connect)
+                        {
+                            *ci.procedure.connect = Connection::Error(e.reason);
+                        }
+                        flags &= ~Flags::Connecting;
+                    }
+                    else if (!!(ci.flags & ConnectionFlags::ProcedureRunning))
+                    {
+                        CONDBG(&ci, "Connection interrupted: %s", GetErrorMessage(e.reason));
+                        ci.error = e.reason;
+                        ci.flags &= ~ConnectionFlags::ProcedureRunning;
+                    }
+                    else
+                    {
+                        CONDBG(&ci, "Connection closed: %s", GetErrorMessage(e.reason));
+                    }
+                    ci.flags &= ~(ConnectionFlags::Connecting | ConnectionFlags::Connected);
+                    ci.handlers.Clear();
                     break;
                 }
 
@@ -217,7 +339,7 @@ async_def()
                     MYDBG("evt_le_connection_parameters: %d, txsize %d, interval %.2q ms, latency %d, timeout %d ms, security %d",
                         e.connection, e.txsize, e.interval * 125, e.latency, e.timeout * 10, e.security_mode);
 
-                    auto &ci = connInfo[e.connection];
+                    auto &ci = *GetConnectionInfo(e.connection);
                     ci.interval = e.interval;
                     ci.timeout = e.timeout * 10;
                     ci.latency = e.latency;
@@ -228,9 +350,23 @@ async_def()
 
                 case EVENT_ID(gecko_evt_le_connection_rssi_id):
                 {
-                    UNUSED auto &e = evt->data.evt_le_connection_rssi;
+                    auto &e = evt->data.evt_le_connection_rssi;
                     MYDBG("evt_le_connection_rssi: %d, status %d, RSSI %d",
                         e.connection, e.status, e.rssi);
+
+                    auto &ci = *GetConnectionInfo(e.connection);
+                    ci.rssi = e.rssi;
+                    break;
+                }
+
+                case EVENT_ID(gecko_evt_le_connection_phy_status_id):
+                {
+                    auto &e = evt->data.evt_le_connection_phy_status;
+                    MYDBG("evt_le_connection_phy_status: %d, status %d",
+                        e.connection, e.phy);
+
+                    auto &ci = *GetConnectionInfo(e.connection);
+                    ci.phy = PHY(e.phy);
                     break;
                 }
 
@@ -247,7 +383,7 @@ async_def()
                 {
                     auto &e = evt->data.evt_le_gap_extended_scan_response;
 
-                    if (callbacks)
+                    if (scanners)
                     {
                         Advertisement evt;
                         evt.packetType = e.packet_type;
@@ -261,13 +397,22 @@ async_def()
                         evt.rssi = e.rssi;
                         evt.channel = e.channel;
                         evt.periodicInterval = e.periodic_interval;
-                        // store the data for the callback
-                        auto pData = e.data.len <= 32 ? MemPoolAlloc<32>() : malloc(e.data.len);
-                        memcpy(pData, e.data.data, e.data.len);
-                        evt.data = Span(pData, e.data.len);
 
-                        kernel::Task::Run(callbacks, &Callbacks::OnBluetoothAdvertisementReceived, evt)
-                            .OnComplete(GetDelegate((void(*)(void*,intptr_t))(e.data.len <= 32 ? MemPoolFree<32> : free), pData));
+                        auto scannerIterator = scanners.begin();
+                        auto scanner = *scannerIterator;
+                        ScannerDelegate delegate;
+                        if (++scannerIterator != scanners.end())
+                        {
+                            // invoke multiple scanners
+                            delegate = GetDelegate(this, &Bluetooth::CallScanners);
+                        }
+                        else
+                        {
+                            // there is only one scanner
+                            delegate = scanner;
+                        }
+
+                        RunCallback(delegate, evt, evt.data, e.data);
                     }
                     else
                     {
@@ -278,12 +423,13 @@ async_def()
                 }
 
                 case EVENT_ID(gecko_evt_le_gap_adv_timeout_id):
+                    this->flags &= ~(Flags::AdvertisingActive | Flags::AdvertisingRequested);
                     break;
 
                 case EVENT_ID(gecko_evt_le_gap_scan_request_id):
                 {
                     UNUSED auto &e = evt->data.evt_le_gap_scan_request;
-                    MYDBG("evt_le_gap_scan_request: %d, host %H (%d), bonding %d",
+                    MYDBG("evt_le_gap_scan_request: %d, host %-H (%d), bonding %d",
                         e.handle, Span(e.address), e.address_type, e.bonding);
                     break;
                 }
@@ -303,23 +449,82 @@ async_def()
                     MYDBG("evt_gatt_mtu_exchanged: %d, MTU %d",
                         e.connection, e.mtu);
 
-                    connInfo[e.connection].mtu = e.mtu;
+                    GetConnectionInfo(e.connection)->mtu = e.mtu;
                     break;
                 }
 
                 case EVENT_ID(gecko_evt_gatt_service_id):
                 {
                     UNUSED auto &e = evt->data.evt_gatt_service;
-                    MYDBG("evt_gatt_service: %d.%d, %H",
-                        e.connection, e.service, Span(e.uuid.data, e.uuid.len));
+                    MYDBG("evt_gatt_service: %d, %H == %08X",
+                        e.connection, Span(e.uuid.data, e.uuid.len), e.service);
+
+                    auto& ci = *GetConnectionInfo(e.connection);
+                    if (ci.procedure.type == GattProcedure::DiscoverService && ci.procedure.service)
+                    {
+                        *ci.procedure.service = e.service;
+                    }
                     break;
                 }
 
                 case EVENT_ID(gecko_evt_gatt_characteristic_id):
                 {
                     UNUSED auto &e = evt->data.evt_gatt_characteristic;
-                    MYDBG("evt_gatt_characteristic: %d.%d, props %d, %H",
-                        e.connection, e.characteristic, e.properties, Span(e.uuid.data, e.uuid.len));
+                    MYDBG("evt_gatt_characteristic: %d, %H = %04X, props %X",
+                        e.connection, Span(e.uuid.data, e.uuid.len), e.characteristic, e.properties);
+
+                    auto& ci = *GetConnectionInfo(e.connection);
+                    if (ci.procedure.type == GattProcedure::DiscoverCharacteristic && ci.procedure.characteristic)
+                    {
+                        *ci.procedure.characteristic = CharacteristicWithProperties(e.characteristic, e.properties);
+                    }
+                    break;
+                }
+
+                case EVENT_ID(gecko_evt_gatt_characteristic_value_id):
+                {
+                    auto& e = evt->data.evt_gatt_characteristic_value;
+                    auto& ci = *GetConnectionInfo(e.connection);
+                    if (e.att_opcode == gatt_handle_value_notification)
+                    {
+                        if (auto handler = FindHandler(ci.handlers, e.characteristic, AttributeHandlerType::Notification))
+                        {
+                            CharacteristicNotification evt;
+                            evt.connection = e.connection;
+                            evt.characteristic = e.characteristic;
+                            evt.offset = e.offset;
+                            RunCallback(handler->notification, evt, evt.data, e.value);
+                        }
+                        else
+                        {
+                            CONDBG(&ci, "Unhandled notification %04X + %d: %H", e.characteristic, e.att_opcode, e.offset, Span(e.value.data, e.value.len));
+                        }
+                    }
+                    else if (ci.procedure.type == GattProcedure::ReadCharacteristic && ci.procedure.read)
+                    {
+                        CONDBG(&ci, "Read characteristic %04X + %d via op %d: %H", e.characteristic, e.offset, e.att_opcode, Span(e.value.data, e.value.len));
+                        Span(e.value.data, e.value.len).CopyTo(ci.procedure.read->buffer.RemoveLeft(e.offset));
+                        ci.procedure.read->read = std::max(uint32_t(e.offset + e.value.len), ci.procedure.read->read);
+                    }
+                    else
+                    {
+                        CONDBG(&ci, "Received characteristic %04X + %d via op %d: %H", e.characteristic, e.offset, e.att_opcode, Span(e.value.data, e.value.len));
+                    }
+                    break;
+                }
+
+                case EVENT_ID(gecko_evt_gatt_procedure_completed_id):
+                {
+                    UNUSED auto &e = evt->data.evt_gatt_procedure_completed;
+                    MYDBG("evt_gatt_procedure_completed: %d, %s",
+                        e.connection, GetErrorMessage(e.result));
+
+                    auto& ci = *GetConnectionInfo(e.connection);
+                    if (!!(ci.flags & ConnectionFlags::ProcedureRunning))
+                    {
+                        ci.error = e.result;
+                        ci.flags &= ~ConnectionFlags::ProcedureRunning;
+                    }
                     break;
                 }
 
@@ -338,15 +543,14 @@ async_def()
                     MYDBG("evt_gatt_server_attribute_value: %d, attr %04X, op %d, offset %d, data %H",
                         e.connection, e.attribute, e.att_opcode, e.offset, Span(e.value.data, e.value.len));
 
-                    if (callbacks)
+                    if (auto handler = FindHandler(handlers, e.attribute, AttributeHandlerType::ValueChange))
                     {
                         AttributeValueChanged evt;
                         evt.connection = e.connection;
                         evt.attribute = e.attribute;
                         evt.opcode = e.att_opcode;
                         evt.offset = e.offset;
-                        evt.value = Span(e.value.data, e.value.len);
-                        kernel::Task::Run(callbacks, &Callbacks::OnBluetoothAttributeValueChanged, evt);
+                        RunCallback(handler->valueChange, evt, evt.value, e.value);
                     }
                     break;
                 }
@@ -357,14 +561,19 @@ async_def()
                     MYDBG("evt_gatt_server_user_read_request: %d, char %04X, op %d, offset %d",
                         e.connection, e.characteristic, e.att_opcode, e.offset);
 
-                    if (callbacks)
+                    if (auto handler = FindHandler(handlers, e.characteristic, AttributeHandlerType::ReadRequest))
                     {
                         CharacteristicReadRequest evt;
                         evt.connection = e.connection;
                         evt.characteristic = e.characteristic;
                         evt.opcode = e.att_opcode;
                         evt.offset = e.offset;
-                        kernel::Task::Run(callbacks, &Callbacks::OnBluetoothCharacteristicReadRequest, evt);
+                        RunCallback(handler->read, evt);
+                    }
+                    else
+                    {
+                        MYDBG("...no read handler found");
+                        gecko_cmd_gatt_server_send_user_read_response(e.connection, e.characteristic, (uint8_t)bg_err_att_att_not_found, 0, NULL);
                     }
                     break;
                 }
@@ -375,32 +584,19 @@ async_def()
                     MYDBG("evt_gatt_server_user_write_request: %d, char %04X, op %d, offset %d, data %H",
                         e.connection, e.characteristic, e.att_opcode, e.offset, Span(e.value.data, e.value.len));
 
-#ifdef gattdb_ota_control
-                    // built-in DFU handling
-                    if (e.characteristic == gattdb_ota_control)
-                    {
-                        MYDBG("...DFU reset requested");
-                        SETBIT(dfuConnection, e.connection);
-                        gecko_cmd_gatt_server_send_user_write_response(e.connection, gattdb_ota_control, bg_err_success);
-                        CloseConnection(e.connection);
-                        break;
-                    }
-#endif
-
-                    if (callbacks)
+                    if (auto handler = FindHandler(handlers, e.characteristic, AttributeHandlerType::WriteRequest))
                     {
                         CharacteristicWriteRequest evt;
                         evt.connection = e.connection;
                         evt.characteristic = e.characteristic;
                         evt.opcode = e.att_opcode;
                         evt.offset = e.offset;
-                        // store the value for the callback
-                        auto pData = e.value.len <= 32 ? MemPoolAlloc<32>() : malloc(e.value.len);
-                        memcpy(pData, e.value.data, e.value.len);
-                        evt.data = Span(pData, e.value.len);
-
-                        kernel::Task::Run(callbacks, &Callbacks::OnBluetoothCharacteristicWriteRequest, evt)
-                            .OnComplete(GetDelegate((void(*)(void*,intptr_t))(e.value.len <= 32 ? MemPoolFree<32> : free), pData));
+                        RunCallback(handler->write, evt, evt.data, e.value);
+                    }
+                    else
+                    {
+                        MYDBG("...no write handler found");
+                        gecko_cmd_gatt_server_send_user_write_response(e.connection, e.characteristic, (uint8_t)bg_err_att_att_not_found);
                     }
                     break;
                 }
@@ -412,13 +608,13 @@ async_def()
 
                     if (e.status_flags & gatt_server_client_config)
                     {
-                        if (callbacks)
+                        if (auto handler = FindHandler(handlers, e.characteristic, AttributeHandlerType::EventRequest))
                         {
                             CharacteristicEventRequest evt;
                             evt.connection = e.connection;
                             evt.characteristic = e.characteristic;
                             evt.level = (EventLevel)e.client_config_flags;
-                            kernel::Task::Run(callbacks, &Callbacks::OnBluetoothCharacteristicEventRequest, evt);
+                            RunCallback(handler->eventRequest, evt);
                         }
                     }
                     break;
@@ -466,14 +662,15 @@ async_def()
                     auto &e = evt->data.evt_sm_bonded;
                     MYDBG("evt_sm_bonded: %d, bonding %d", e.connection, e.bonding);
 
-                    connInfo[e.connection].bonding = e.bonding;
+                    GetConnectionInfo(e.connection)->bonding = e.bonding;
                     break;
                 }
                 case EVENT_ID(gecko_evt_sm_bonding_failed_id):
                 {
                     auto &e = evt->data.evt_sm_bonding_failed;
-                    auto &con = connInfo[e.connection];
                     MYDBG("evt_sm_bonding_failed: %d, reason %s", e.connection, GetErrorMessage(e.reason));
+
+                    auto &con = *GetConnectionInfo(e.connection);
                     if (e.reason == bg_err_smp_pairing_not_supported && con.bonding != -1)
                     {
                         // this error is reported when there is a mismatch between the device key and the current one
@@ -564,3 +761,471 @@ res_pair_t Bluetooth::Advertisement::GetFieldImpl(Span data, uint8_t field)
 
     return Span();
 }
+
+void Bluetooth::RegisterHandler(LinkedList<AttributeHandler>& handlers, AttributeHandler handler)
+{
+    auto manipulator = handlers.Manipulate();
+    while (manipulator && manipulator.Element().attribute < handler.attribute)
+        ++manipulator;
+    manipulator.Insert(handler);
+}
+
+Bluetooth::AttributeHandler* Bluetooth::FindHandler(LinkedList<AttributeHandler> handlers, Attribute attribute, AttributeHandlerType type)
+{
+    for (auto& ah: handlers)
+    {
+        if (ah.attribute < attribute)
+            continue;
+        if (ah.attribute > attribute)
+            break;
+        if (ah.type == type)
+            return &ah;
+    }
+    return NULL;
+}
+
+static void Decrement(uint32_t* ptr, intptr_t result)
+{
+    (*ptr)--;
+}
+
+async(Bluetooth::CallScanners, Advertisement& adv)
+async_def(uint32_t running)
+{
+    for (auto scanner: scanners)
+    {
+        f.running++;
+        kernel::Task::Run(scanner, adv).OnComplete(GetDelegate(Decrement, &f.running));
+    }
+
+    await_mask(f.running, ~0u, 0);
+}
+async_end
+
+async(Bluetooth::Connect, bd_addr address, mono_t timeout, PHY phy)
+async_def(
+    mono_t waitUntil;
+    ConnectionInfo* connection;
+    OutgoingConnection res;
+)
+{
+    f.waitUntil = MONO_CLOCKS + timeout;
+
+    if (!await_acquire_until(flags, Flags::Connecting, f.waitUntil))
+    {
+        MYDBG("Cannot connect to %-H - timeout waiting for other connections to complete", Span(address));
+        async_return(false);
+    }
+
+    UpdateBackgroundProcess();  // turn off scanning and advertising
+    MYDBG("Connecting to %-H...", Span(address));
+
+    auto rsp = gecko_cmd_le_gap_connect(address, le_gap_address_type_public, phy);
+    f.res = Connection::Error(rsp->result);
+
+    if (rsp->result != bg_err_success)
+    {
+        MYDBG("Connection failed immediately: %s", GetErrorMessage(rsp->result));
+    }
+    else
+    {
+        f.connection = GetConnectionInfo(rsp->connection);
+        f.connection->flags = ConnectionFlags::Connecting;
+        f.connection->procedure.type = GattProcedure::Connection;
+        f.connection->procedure.connect = &f.res;
+        if (!await_mask_until(f.connection->flags, ConnectionFlags::Connecting, 0, f.waitUntil))
+        {
+            CONDBG(f.connection, "Timed out");
+            await(CloseConnectionImpl, f.connection, ConnectionFlags::Connecting);
+            f.res = Connection::Error(bg_err_gatt_connection_timeout);
+        }
+
+        ASSERT(!(f.connection->flags & ConnectionFlags::Connecting));
+
+        if (f.res)
+        {
+            ASSERT(f.connection->flags & ConnectionFlags::Connected);
+            CONDBG(f.connection, "CONNECTION SUCESS");
+        }
+        else
+        {
+            ASSERT(!(f.connection->flags & ConnectionFlags::Connected));
+            CONDBG(f.connection, "CONNECTION FAILED: %s", GetErrorMessage(f.res.error));
+        }
+
+        f.connection->EndProcedure();
+    }
+
+    flags &= ~Flags::Connecting;
+    UpdateBackgroundProcess();  // resume scanning and advertising if configured
+
+    async_return(f.res.raw);
+}
+async_end
+
+async(Bluetooth::CloseConnection, Connection con)
+async_def(ConnectionInfo* connection)
+{
+    // cannot use GetConnectionInfo, we want to survive cases when the connection is already reused
+    f.connection = GetConnectionInfo(con);
+    if (con.seq == f.connection->seq && GETBIT(connections, con.id))
+    {
+        await(CloseConnectionImpl, f.connection, ConnectionFlags::Connected);
+    }
+}
+async_end
+
+async(Bluetooth::CloseConnectionImpl, ConnectionInfo* connection, ConnectionFlags activeFlag)
+async_def(unsigned retry)
+{
+    await_acquire(connection->flags, ConnectionFlags::Procedure);
+    ASSERT(!(connection->flags & ConnectionFlags::ProcedureRunning));
+    ASSERT(!connection->procedure.ptr);
+    ASSERT(connection->procedure.type == GattProcedure::Idle);
+    CONDBG(connection, "Closing");
+
+    // we have to try closing the connection a few times, there appears to be a bug in
+    // some versions of libbluetooth that it occasionaly fails to disconnect
+    f.retry = 5;
+    do
+    {
+        auto rsp = gecko_cmd_le_connection_close(GetConnectionIndex(connection));
+        if (rsp->result != bg_err_success)
+        {
+            CONDBG(connection, "Failed to close connection: %s", rsp->result);
+        }
+
+        if (!await_mask_ms(connection->flags, activeFlag, 0, 500))
+        {
+            CONDBG(connection, "Connection did not close");
+        }
+        else
+        {
+            break;
+        }
+    } while (f.retry--);
+
+    if (!!(connection->flags & activeFlag))
+    {
+        CONDBG(connection, "FORCING connection closed");
+        connection->flags &= ~activeFlag;
+    }
+
+    connection->EndProcedure();
+    async_return(!connection->error);
+}
+async_end
+
+errorcode_t Bluetooth::OutgoingConnection::GetLastError() const
+{
+    auto conn = bluetooth.GetConnectionInfo(*this);
+    if (seq != conn->seq)
+    {
+        return bg_err_not_connected;
+    }
+    else
+    {
+        return (errorcode_t)conn->error;
+    }
+}
+
+async(Bluetooth::BeginProcedure, OutgoingConnection connection, GattProcedure procedure)
+async_def(
+    ConnectionInfo* connection;
+)
+{
+    f.connection = GetConnectionInfo(connection);
+    if (f.connection->seq != connection.seq)
+    {
+        // connection was already replaced
+        CONDBG(f.connection, "connection instance mismatch, %d != %d", f.connection->seq, connection.seq);
+        async_return(0);
+    }
+
+    await_acquire(f.connection->flags, ConnectionFlags::Procedure);
+    if (f.connection->seq != connection.seq)
+    {
+        // connection was already replaced, we must not hold it
+        CONDBG(f.connection, "connection instance mismatch, %d != %d", f.connection->seq, connection.seq);
+        f.connection->flags &= ~ConnectionFlags::Procedure;
+        async_return(0);
+    }
+
+    ASSERT(!(f.connection->flags & ConnectionFlags::ProcedureRunning));
+    ASSERT(!f.connection->procedure.ptr);
+    ASSERT(f.connection->procedure.type == GattProcedure::Idle);
+    f.connection->flags |= ConnectionFlags::ProcedureRunning;
+    f.connection->procedure.type = procedure;
+    async_return((intptr_t)f.connection);
+}
+async_end
+
+void Bluetooth::ConnectionInfo::EndProcedure()
+{
+    procedure.type = GattProcedure::Idle;
+    procedure.ptr = NULL;
+    flags &= ~(ConnectionFlags::Procedure | ConnectionFlags::ProcedureRunning);
+}
+
+async(Bluetooth::DiscoverService, OutgoingConnection connection, const UuidLE& uuid)
+async_def(
+    ConnectionInfo* connection;
+    Service res;
+)
+{
+    if ((f.connection = (ConnectionInfo*)await(BeginProcedure, connection, GattProcedure::DiscoverService)))
+    {
+        f.connection->procedure.service = &f.res;
+        CONDBG(f.connection, "Discovering service %-H...", Span(uuid));
+
+        auto rsp = gecko_cmd_gatt_discover_primary_services_by_uuid(connection.id, sizeof(UuidLE), (const uint8_t*)&uuid);
+        f.connection->error = rsp->result;
+
+        if (rsp->result != bg_err_success)
+        {
+            CONDBG(f.connection, "...immediately failed: %s", GetErrorMessage(rsp->result));
+        }
+        else
+        {
+            await_mask(f.connection->flags, ConnectionFlags::ProcedureRunning, 0);
+        }
+
+        if (f.connection->seq == connection.seq)
+        {
+            f.connection->EndProcedure();
+            async_return(f.connection->error ? 0 : f.res.handle);
+        }
+    }
+
+    async_return(0);
+}
+async_end
+
+async(Bluetooth::DiscoverCharacteristic, OutgoingConnection connection, Service service, const UuidLE& uuid)
+async_def(
+    ConnectionInfo* connection;
+    CharacteristicWithProperties res;
+)
+{
+    if ((f.connection = (ConnectionInfo*)await(BeginProcedure, connection, GattProcedure::DiscoverCharacteristic)))
+    {
+        f.connection->procedure.characteristic = &f.res;
+        CONDBG(f.connection, "Discovering characteristic %-H of service %08X...", Span(uuid), service);
+
+        auto rsp = gecko_cmd_gatt_discover_characteristics_by_uuid(connection.id, service, sizeof(UuidLE), (const uint8_t*)&uuid);
+        f.connection->error = rsp->result;
+
+        if (rsp->result != bg_err_success)
+        {
+            CONDBG(f.connection, "...immediately failed: %s", GetErrorMessage(rsp->result));
+        }
+        else
+        {
+            await_mask(f.connection->flags, ConnectionFlags::ProcedureRunning, 0);
+        }
+
+        if (f.connection->seq == connection.seq)
+        {
+            f.connection->EndProcedure();
+            async_return(f.connection->error ? 0 : f.res.raw);
+        }
+    }
+
+    async_return(0);
+}
+async_end
+
+async(Bluetooth::SetCharacteristicNotification, OutgoingConnection connection, Characteristic characteristic, gatt_client_config_flag flags)
+async_def(
+    ConnectionInfo* connection
+)
+{
+    if ((f.connection = (ConnectionInfo*)await(BeginProcedure, connection, GattProcedure::SetCharacteristicNotification)))
+    {
+        CONDBG(f.connection, "Setting notifications for characteristic %04X to %02X..", characteristic, flags);
+
+        auto rsp = gecko_cmd_gatt_set_characteristic_notification(connection.id, characteristic, flags);
+        f.connection->error = rsp->result;
+
+        if (rsp->result != bg_err_success)
+        {
+            CONDBG(f.connection, "...immediately failed: %s", GetErrorMessage(rsp->result));
+        }
+        else
+        {
+            await_mask(f.connection->flags, ConnectionFlags::ProcedureRunning, 0);
+        }
+
+        if (f.connection->seq == connection.seq)
+        {
+            f.connection->EndProcedure();
+            async_return(!f.connection->error);
+        }
+    }
+
+    async_return(false);
+}
+async_end
+
+async(Bluetooth::ReadCharacteristic, OutgoingConnection connection, Characteristic characteristic, Buffer buffer)
+async_def(
+    ConnectionInfo* connection;
+    ReadOperation op;
+)
+{
+    f.op.buffer = buffer;
+
+    if ((f.connection = (ConnectionInfo*)await(BeginProcedure, connection, GattProcedure::ReadCharacteristic)))
+    {
+        f.connection->procedure.read = &f.op;
+        CONDBG(f.connection, "Reading characteristic %04X..", characteristic);
+
+        auto rsp = gecko_cmd_gatt_read_characteristic_value(connection.id, characteristic);
+        f.connection->error = rsp->result;
+
+        if (rsp->result != bg_err_success)
+        {
+            CONDBG(f.connection, "...immediately failed: %s", GetErrorMessage(rsp->result));
+        }
+        else
+        {
+            await_mask(f.connection->flags, ConnectionFlags::ProcedureRunning, 0);
+        }
+
+        if (f.connection->seq == connection.seq)
+        {
+            f.connection->EndProcedure();
+            async_return(f.connection->error ? 0 : f.op.read);
+        }
+    }
+
+    async_return(0);
+}
+async_end
+
+async(Bluetooth::WriteCharacteristic, OutgoingConnection connection, Characteristic characteristic, Span value)
+async_def(
+    ConnectionInfo* connection;
+    WriteOperation op;
+)
+{
+    f.op.value = value;
+
+    if ((f.connection = (ConnectionInfo*)await(BeginProcedure, connection, GattProcedure::WriteCharacteristic)))
+    {
+        f.connection->procedure.write = &f.op;
+        CONDBG(f.connection, "Writing characteristic %04X = %H", characteristic, value);
+
+        auto rsp = gecko_cmd_gatt_write_characteristic_value(connection.id, characteristic, value.Length(), value.Pointer<uint8_t>());
+        f.connection->error = rsp->result;
+
+        if (rsp->result != bg_err_success)
+        {
+            CONDBG(f.connection, "...immediately failed: %s", GetErrorMessage(rsp->result));
+        }
+        else
+        {
+            await_mask(f.connection->flags, ConnectionFlags::ProcedureRunning, 0);
+        }
+
+        if (f.connection->seq == connection.seq)
+        {
+            f.connection->EndProcedure();
+            async_return(f.connection->error ? 0 : f.op.written);
+        }
+    }
+
+    async_return(0);
+}
+async_end
+
+async(Bluetooth::WriteCharacteristicWithoutResponse, OutgoingConnection connection, Characteristic characteristic, Span value)
+async_def()
+{
+    await(TxAlmostIdle);
+
+    if (auto conn = (ConnectionInfo*)await(BeginProcedure, connection, GattProcedure::WriteCharacteristicWithoutResponse))
+    {
+        CONDBG(conn, "Writing characteristic w/o response %04X = %H", characteristic, value);
+
+        auto rsp = gecko_cmd_gatt_write_characteristic_value_without_response(connection.id, characteristic, value.Length(), value.Pointer<uint8_t>());
+        conn->error = rsp->result;
+
+        if (rsp->result != bg_err_success)
+        {
+            CONDBG(conn, "...immediately failed: %s", GetErrorMessage(rsp->result));
+        }
+        else
+        {
+            CONDBG(conn, "...sent %d", rsp->sent_len);
+        }
+
+        conn->EndProcedure();
+        async_return(rsp->sent_len);
+    }
+
+    async_return(0);
+}
+async_end
+
+async(Bluetooth::SendCharacteristicNotification, IncomingConnection connection, Characteristic characteristic, Span value)
+async_def()
+{
+    await(TxAlmostIdle);
+
+    if (auto conn = (ConnectionInfo*)await(BeginProcedure, connection, GattProcedure::SendCharacteristicNotification))
+    {
+        CONDBG(conn, "Notifying characteristic %04X = %H", characteristic, value);
+
+        auto rsp = gecko_cmd_gatt_server_send_characteristic_notification(connection.id, characteristic, value.Length(), value.Pointer<uint8_t>());
+        conn->error = rsp->result;
+
+        if (rsp->result != bg_err_success)
+        {
+            CONDBG(conn, "...immediately failed: %s", GetErrorMessage(rsp->result));
+        }
+        else
+        {
+            CONDBG(conn, "...sent %d", rsp->sent_len);
+        }
+
+        conn->EndProcedure();
+        async_return(rsp->sent_len);
+    }
+
+    async_return(0);
+}
+async_end
+
+async(Bluetooth::GeckoOTAControlWriteHandler, CharacteristicWriteRequest& e)
+async_def(
+    ConnectionInfo* connection;
+)
+{
+    MYDBG("...DFU reset requested");
+    f.connection = GetConnectionInfo(e.connection);
+    f.connection->flags |= ConnectionFlags::DfuResetRequested;
+    e.Success();
+    await(CloseConnectionImpl, f.connection, ConnectionFlags::Connected);
+}
+async_end
+
+extern "C" const ApplicationProperties_t applicationProperties;
+
+async(Bluetooth::GeckoOTAVersionReadHandler, CharacteristicReadRequest& e)
+async_def_sync()
+{
+    e.Success(applicationProperties.app.version);
+}
+async_end
+
+async(Bluetooth::SystemIDReadHandler, CharacteristicReadRequest& e)
+async_def_sync()
+{
+    auto addr = gecko_cmd_system_get_bt_address()->address;
+    e.Success(BYTES(
+        addr.addr[0], addr.addr[1], addr.addr[2],
+        0xFE, 0xFF,
+        addr.addr[3], addr.addr[4], addr.addr[5]));
+}
+async_end
