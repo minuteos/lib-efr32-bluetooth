@@ -880,8 +880,6 @@ async_def(unsigned retry)
 {
     await_acquire(connection->flags, ConnectionFlags::Procedure);
     ASSERT(!(connection->flags & ConnectionFlags::ProcedureRunning));
-    ASSERT(!connection->procedure.ptr);
-    ASSERT(connection->procedure.type == GattProcedure::Idle);
     CONDBG(connection, "Closing");
 
     // we have to try closing the connection a few times, there appears to be a bug in
