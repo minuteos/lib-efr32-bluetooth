@@ -610,6 +610,7 @@ public:
     async(WriteCharacteristic, OutgoingConnection connection, Characteristic characteristic, Span data);
     async(WriteCharacteristicWithoutResponse, OutgoingConnection connection, Characteristic characteristic, Span data);
     async(SendCharacteristicNotification, IncomingConnection connection, Characteristic characteristic, Span data);
+    async(BroadcastCharacteristicNotification, Characteristic characteristic, Span data);
 
     /********** sm (Security Manager) **********/
 

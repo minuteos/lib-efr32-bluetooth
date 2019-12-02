@@ -1197,6 +1197,28 @@ async_def()
 }
 async_end
 
+async(Bluetooth::BroadcastCharacteristicNotification, Characteristic characteristic, Span value)
+async_def()
+{
+    await(TxAlmostIdle);
+
+    MYDBG("Broadcast characteristic notification %04X = %H", characteristic, value);
+
+    auto rsp = gecko_cmd_gatt_server_send_characteristic_notification(0xFF, characteristic, value.Length(), value.Pointer<uint8_t>());
+
+    if (rsp->result != bg_err_success)
+    {
+        MYDBG("...immediately failed: %s", GetErrorMessage(rsp->result));
+        async_return(0);
+    }
+    else
+    {
+        MYDBG("...sent %d", rsp->sent_len);
+        async_return(rsp->sent_len);
+    }
+}
+async_end
+
 async(Bluetooth::GeckoOTAControlWriteHandler, CharacteristicWriteRequest& e)
 async_def(
     ConnectionInfo* connection;
