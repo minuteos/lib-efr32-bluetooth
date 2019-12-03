@@ -57,5 +57,6 @@ $(EFM32_SDK_RAIL): $(OBJDIR)
 $(GATT_DB:.xml=_db.h): $(GATT_DB:.xml=_db.c)
 $(GATT_DB:.xml=_db.c): $(GATT_DB) $(BGBUILD)
 	$(BGBUILD) -g $<
+	$(RM) -f $(call parentdir, $(GATT_DB))constants
 
 prebuild: $(GATT_DB:.xml=_db.c)
