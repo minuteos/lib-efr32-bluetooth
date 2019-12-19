@@ -34,6 +34,10 @@ struct BluetoothConfig : gecko_configuration_t
         scheduler_callback = Bluetooth::ScheduleLL;
         stack_schedule_callback = Bluetooth::ScheduleMain;
         gattdb = bg_gattdb;
+#ifdef BLUETOOTH_OTA_NAME
+        ota.device_name_len = sizeof(BLUETOOTH_OTA_NAME) - 1;
+        ota.device_name_ptr = (char*)BLUETOOTH_OTA_NAME;
+#endif
     }
 };
 
