@@ -51,6 +51,11 @@ void Bluetooth::UpdateBackgroundProcess()
         return;
     }
 
+    if (scanners)
+    {
+        flags |= Flags::ScanningRequested;
+    }
+
     if (!!(flags & Flags::Connecting))
     {
         // scanning and advertising must be disabled while connecting, otherwise the stack gets completely confused
@@ -65,6 +70,7 @@ void Bluetooth::UpdateBackgroundProcess()
     switch (flags & (Flags::AdvertisingActive | Flags::AdvertisingRequested))
     {
         case Flags::AdvertisingActive:
+            MYDBG("le_gap_stop_advertising()");
             ProcessResult(gecko_cmd_le_gap_stop_advertising(0)->result);
             this->flags &= ~Flags::AdvertisingActive;
             break;
@@ -73,9 +79,11 @@ void Bluetooth::UpdateBackgroundProcess()
             if (!!(flags & Flags::AdvUpdate))
             {
                 // reconfigure advertising
+                MYDBG("le_gap_set_advertise_timing(%d, %d, %d, %d)", advMin, advMax, advTimeout, advCount);
                 ProcessResult(gecko_cmd_le_gap_set_advertise_timing(0, advMin, advMax, advTimeout, advCount)->result);
                 ProcessResult(gecko_cmd_le_gap_set_advertise_channel_map(0, advChannels)->result);
             }
+            MYDBG("le_gap_start_advertisin(%d, %d)", advDiscover, advConnect);
             ProcessResult(gecko_cmd_le_gap_start_advertising(0, advDiscover, advConnect)->result);
             this->flags = (this->flags & ~Flags::AdvUpdate) | Flags::AdvertisingActive;
             break;
@@ -87,6 +95,7 @@ void Bluetooth::UpdateBackgroundProcess()
     switch (flags & (Flags::ScanningActive | Flags::ScanningRequested))
     {
         case Flags::ScanningActive:
+            MYDBG("le_gap_end_procedure()");
             ProcessResult(gecko_cmd_le_gap_end_procedure()->result);
             this->flags &= ~Flags::ScanningActive;
             break;
@@ -97,13 +106,18 @@ void Bluetooth::UpdateBackgroundProcess()
                 break;
             }
             // parameters updated, restart scanning
+            MYDBG("le_gap_end_procedure()");
             ProcessResult(gecko_cmd_le_gap_end_procedure()->result);
             // fallthrough...
 
         case Flags::ScanningRequested:
-            ProcessResult(gecko_cmd_le_gap_start_discovery(scanPhy, scanMode)->result);
+        {
+            auto scanner = *scanners.begin();
+            MYDBG("le_gap_start_discovery(%d, %d)", scanner.phy, scanner.mode);
+            ProcessResult(gecko_cmd_le_gap_start_discovery(scanner.phy, uint8(scanner.mode))->result);
             this->flags = (this->flags & ~Flags::ScanUpdate) | Flags::ScanningActive;
             break;
+        }
 
         default:
             break;
@@ -413,7 +427,7 @@ async_def()
                         else
                         {
                             // there is only one scanner
-                            delegate = scanner;
+                            delegate = scanner.delegate;
                         }
 
                         RunCallback(delegate, evt, evt.data, e.data);
@@ -766,6 +780,30 @@ res_pair_t Bluetooth::Advertisement::GetFieldImpl(Span data, uint8_t field)
     return Span();
 }
 
+void Bluetooth::AddScanner(ScannerDelegate delegate, ScanMode mode, PHY phy)
+{
+    scanners.Push(Scanner(delegate, mode, phy));
+    flags |= Flags::ScanUpdate;
+    UpdateBackgroundProcess();
+}
+
+void Bluetooth::RemoveScanner(ScannerDelegate delegate)
+{
+    for (auto m: scanners.Manipulate())
+    {
+        if (m.Element().delegate == delegate)
+        {
+            flags |= Flags::ScanUpdate;
+            m.Remove();
+        }
+    }
+
+    if (!!(flags & Flags::ScanUpdate))
+    {
+        UpdateBackgroundProcess();
+    }
+}
+
 void Bluetooth::RegisterHandler(LinkedList<AttributeHandler>& handlers, AttributeHandler handler)
 {
     auto manipulator = handlers.Manipulate();
@@ -799,7 +837,7 @@ async_def(uint32_t running)
     for (auto scanner: scanners)
     {
         f.running++;
-        kernel::Task::Run(scanner, adv).OnComplete(GetDelegate(Decrement, &f.running));
+        kernel::Task::Run(scanner.delegate, adv).OnComplete(GetDelegate(Decrement, &f.running));
     }
 
     await_mask(f.running, ~0u, 0);

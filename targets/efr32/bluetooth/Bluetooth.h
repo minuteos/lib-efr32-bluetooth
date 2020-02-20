@@ -347,31 +347,6 @@ public:
         static RES_PAIR_DECL(GetFieldImpl, Span s, uint8_t field);
     };
 
-    typedef AsyncDelegate<Advertisement&> ScannerDelegate;
-
-    //! Registers a scanner (handler for advertisements)
-    void RegisterScanner(ScannerDelegate scanner)
-        { scanners.Push(scanner); }
-    template<typename TTarget, typename THandler> void RegisterScanner(TTarget&& target, THandler&& handler)
-        { RegisterScanner(GetDelegate(std::forward<TTarget>(target), std::forward<THandler>(handler))); }
-
-    //! Registers a handler for handling an attribute (characteristic or descriptor)
-    template<typename T> void RegisterHandler(Attribute attribute, T&& handler)
-        { RegisterHandler(handlers, AttributeHandler(attribute, std::forward<T>(handler))); }
-    //! Registers a handler for handling an attribute (characteristic or descriptor)
-    template<typename TTarget, typename THandler> void RegisterHandler(Attribute attribute, TTarget&& target, THandler&& handler)
-        { RegisterHandler(attribute, GetDelegate(std::forward<TTarget>(target), std::forward<THandler>(handler))); }
-
-    //! Registers standard handler for the Gecko OTA Control characteristic
-    void RegisterGeckoOTAControlHandler(Characteristic characteristic)
-        { RegisterHandler(characteristic, this, &Bluetooth::GeckoOTAControlWriteHandler); }
-    //! Registers standard handler for the Gecko OTA Version characteristic
-    void RegisterGeckoOTAVersionHandler(Characteristic characteristic)
-        { RegisterHandler(characteristic, this, &Bluetooth::GeckoOTAVersionReadHandler); }
-    //! Registers standard handler for retrieving System ID
-    void RegisterSystemIDHandler(Characteristic characteristic)
-        { RegisterHandler(characteristic, this, &Bluetooth::SystemIDReadHandler); }
-
     //! Initializes the Bluetooth stack and waits until the startup is complete
     async(Init);
     //! Returns true if the Bluetooth stack initialization is complete
@@ -554,28 +529,24 @@ public:
         return err;
     }
 
-    //! Starts the scanning process
-    void StartScanning(ScanMode mode, PHY phy = PHY1M)
-    {
-        flags |= Flags::ScanningRequested | Flags::ScanUpdate;
-        scanMode = (uint8_t)mode;
-        scanPhy = (uint8_t)phy;
-        UpdateBackgroundProcess();
-    }
-
-    //! Stops the scanning process
-    void StopScanning()
-    {
-        flags &= ~Flags::ScanningRequested;
-        UpdateBackgroundProcess();
-    }
-
     //! Tries to connect to the peripheral with the specified address
     //! @returns A valid @ref OutgoingConnection object if connection succeeded
     async(Connect, bd_addr address, mono_t timeout, PHY phy = PHY1M);
 
     //! Closes an active connection
     async(CloseConnection, Connection connection);
+
+    typedef AsyncDelegate<Advertisement&> ScannerDelegate;
+
+    //! Adds a scanner (handler for advertisements)
+    void AddScanner(ScannerDelegate scanner, ScanMode mode = ScanMode::Observation, PHY phy = PHY1M);
+    template<typename TTarget, typename THandler> void AddScanner(TTarget&& target, THandler&& handler, ScanMode mode = ScanMode::Observation, PHY phy = PHY1M)
+        { AddScanner(GetDelegate(std::forward<TTarget>(target), std::forward<THandler>(handler)), mode, phy); }
+
+    //! Removes a scanner
+    void RemoveScanner(ScannerDelegate scanner);
+    template<typename TTarget, typename THandler> void RemoveScanner(TTarget&& target, THandler&& handler)
+        { RemoveScanner(GetDelegate(std::forward<TTarget>(target), std::forward<THandler>(handler))); }
 
     /********** gatt **********/
 
@@ -611,6 +582,23 @@ public:
     async(WriteCharacteristicWithoutResponse, OutgoingConnection connection, Characteristic characteristic, Span data);
     async(SendCharacteristicNotification, IncomingConnection connection, Characteristic characteristic, Span data);
     async(BroadcastCharacteristicNotification, Characteristic characteristic, Span data);
+
+    //! Registers a handler for handling an attribute (characteristic or descriptor)
+    template<typename T> void RegisterHandler(Attribute attribute, T&& handler)
+        { RegisterHandler(handlers, AttributeHandler(attribute, std::forward<T>(handler))); }
+    //! Registers a handler for handling an attribute (characteristic or descriptor)
+    template<typename TTarget, typename THandler> void RegisterHandler(Attribute attribute, TTarget&& target, THandler&& handler)
+        { RegisterHandler(attribute, GetDelegate(std::forward<TTarget>(target), std::forward<THandler>(handler))); }
+
+    //! Registers standard handler for the Gecko OTA Control characteristic
+    void RegisterGeckoOTAControlHandler(Characteristic characteristic)
+        { RegisterHandler(characteristic, this, &Bluetooth::GeckoOTAControlWriteHandler); }
+    //! Registers standard handler for the Gecko OTA Version characteristic
+    void RegisterGeckoOTAVersionHandler(Characteristic characteristic)
+        { RegisterHandler(characteristic, this, &Bluetooth::GeckoOTAVersionReadHandler); }
+    //! Registers standard handler for retrieving System ID
+    void RegisterSystemIDHandler(Characteristic characteristic)
+        { RegisterHandler(characteristic, this, &Bluetooth::SystemIDReadHandler); }
 
     /********** sm (Security Manager) **********/
 
@@ -717,6 +705,16 @@ private:
         };
     };
 
+    struct Scanner
+    {
+        constexpr Scanner(ScannerDelegate delegate, ScanMode mode, PHY phy)
+            : delegate(delegate), mode(mode), phy(phy) {}
+
+        ScannerDelegate delegate;
+        ScanMode mode;
+        PHY phy;
+    };
+
     Flags flags = Flags::None;              //< Various state flags, see above
     bool event = false;                     //< Event handler trigger from stack
     bool llEvent = false;                   //< Event handler trigger from interrupt
@@ -726,13 +724,11 @@ private:
     uint32_t advMin = 160, advMax = 160;    //< Advertising interval
     uint16_t advTimeout = 0;                //< Advertisement timeout
     uint8_t advCount = 0;                   //< Advertisement count limit
-    uint8_t scanMode;                       //< Scanning mode
-    uint8_t scanPhy;                        //< Scanning PHY
     uint32_t connections = 0;               //< Active connections mask
     int ioBuffers;                          //< Total count of I/O buffers
     int bufferSize;                         //< I/O buffer size
     LinkedList<AttributeHandler> handlers;
-    LinkedList<ScannerDelegate> scanners;
+    LinkedList<Scanner> scanners;
 
     async(CallScanners, Advertisement& advert);
 
