@@ -22,9 +22,18 @@ void CRYPTO0_IRQHandler()
     ASSERT(0);
 }
 
+void PRORTC_IRQHandler_X()
+{
+    // read PRORTC->IFC to clear it
+    (void)*(volatile uint32_t*)0x40044010;
+}
+
 void sl_sleeptimer_init()
 {
     // timer initialization is kernel's responsibility
+    // however, libbluetooth 2.13+ uses PRORTC timer for some cases
+    // and relies on it having an interrupt handler that just clears the flags
+    Cortex_SetIRQHandler(PRORTC_IRQn, PRORTC_IRQHandler_X);
 }
 
 void sl_sleeptimer_restart_timer()
