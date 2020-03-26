@@ -8,7 +8,7 @@
  * Stubs for unused functions required by libbluetooth
  */
 
-#include <base/base.h>
+#include <kernel/kernel.h>
 
 BEGIN_EXTERN_C
 
@@ -46,6 +46,12 @@ uint32_t sl_sleeptimer_get_tick_count()
 {
     // the one true time source
     return MONO_CLOCKS;
+}
+
+uint32_t sl_sleeptimer_ms32_to_tick(uint32_t time_ms, uint32_t *tick)
+{
+    *tick = MonoFromMilliseconds(time_ms);
+    return 0;
 }
 
 END_EXTERN_C
