@@ -11,7 +11,16 @@
 #include <application_properties.h>
 #include <rail.h>
 
+//#define BLUETOOTH_TRACE   1
+
 #define MYDBG(...)  DBGCL("bluetooth", __VA_ARGS__)
+
+#if BLUETOOTH_TRACE
+#define MYTRACE(...) MYDBG(__VA_ARGS__)
+#else
+#define MYTRACE(...)
+#endif
+
 #define CONDBG(con, fmt, ...)    DBGCL("bluetooth", "[%d] " fmt, GetConnectionIndex(con), ## __VA_ARGS__)
 
 Bluetooth bluetooth;
@@ -83,7 +92,7 @@ void Bluetooth::UpdateBackgroundProcess()
                 ProcessResult(gecko_cmd_le_gap_set_advertise_timing(0, advMin, advMax, advTimeout, advCount)->result);
                 ProcessResult(gecko_cmd_le_gap_set_advertise_channel_map(0, advChannels)->result);
             }
-            MYDBG("le_gap_start_advertisin(%d, %d)", advDiscover, advConnect);
+            MYTRACE("le_gap_start_advertising(%d, %d)", advDiscover, advConnect);
             ProcessResult(gecko_cmd_le_gap_start_advertising(0, advDiscover, advConnect)->result);
             this->flags = (this->flags & ~Flags::AdvUpdate) | Flags::AdvertisingActive;
             break;
@@ -1242,22 +1251,32 @@ async_def()
 {
     await(TxAlmostIdle);
 
-    MYDBG("Broadcast characteristic notification %04X = %H", characteristic, value);
+    async_return(TryBroadcastCharacteristicNotification(characteristic, value));
+}
+async_end
+
+size_t Bluetooth::TryBroadcastCharacteristicNotification(Characteristic characteristic, Span value)
+{
+    if (!TxAlmostIdle())
+    {
+        return 0;
+    }
+
+    MYTRACE("Broadcast characteristic notification %04X = %H", characteristic, value);
 
     auto rsp = gecko_cmd_gatt_server_send_characteristic_notification(0xFF, characteristic, value.Length(), value.Pointer<uint8_t>());
 
     if (rsp->result != bg_err_success)
     {
-        MYDBG("...immediately failed: %s", GetErrorMessage(rsp->result));
-        async_return(0);
+        MYTRACE("...immediately failed: %s", GetErrorMessage(rsp->result));
+        return 0;
     }
     else
     {
-        MYDBG("...sent %d", rsp->sent_len);
-        async_return(rsp->sent_len);
+        MYTRACE("...sent %d", rsp->sent_len);
+        return rsp->sent_len;
     }
 }
-async_end
 
 async(Bluetooth::GeckoOTAControlWriteHandler, CharacteristicWriteRequest& e)
 async_def(

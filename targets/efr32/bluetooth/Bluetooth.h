@@ -582,6 +582,7 @@ public:
     async(WriteCharacteristicWithoutResponse, OutgoingConnection connection, Characteristic characteristic, Span data);
     async(SendCharacteristicNotification, IncomingConnection connection, Characteristic characteristic, Span data);
     async(BroadcastCharacteristicNotification, Characteristic characteristic, Span data);
+    size_t TryBroadcastCharacteristicNotification(Characteristic characteristic, Span data);
 
     //! Registers a handler for handling an attribute (characteristic or descriptor)
     template<typename T> void RegisterHandler(Attribute attribute, T&& handler)
