@@ -332,6 +332,10 @@ async_def()
                     if (!!(ci.flags & ConnectionFlags::DfuResetRequested))
                     {
                         CONDBG(&ci, "...DFU reset");
+                        for (auto& handler: beforeReset)
+                        {
+                            handler();
+                        }
                         gecko_cmd_system_reset(2);
                     }
 #endif

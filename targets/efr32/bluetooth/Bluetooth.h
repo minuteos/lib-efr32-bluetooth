@@ -597,6 +597,9 @@ public:
     //! Registers standard handler for the Gecko OTA Version characteristic
     void RegisterGeckoOTAVersionHandler(Characteristic characteristic)
         { RegisterHandler(characteristic, this, &Bluetooth::GeckoOTAVersionReadHandler); }
+    //! Registers a handler called just before a reset to DFU
+    void RegisterGeckoOTAResetHandler(Delegate<void> handler)
+        { beforeReset.Push(handler); }
     //! Registers standard handler for retrieving System ID
     void RegisterSystemIDHandler(Characteristic characteristic)
         { RegisterHandler(characteristic, this, &Bluetooth::SystemIDReadHandler); }
@@ -730,6 +733,7 @@ private:
     int bufferSize;                         //< I/O buffer size
     LinkedList<AttributeHandler> handlers;
     LinkedList<Scanner> scanners;
+    LinkedList<Delegate<void>> beforeReset;
 
     async(CallScanners, Advertisement& advert);
 
