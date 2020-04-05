@@ -203,7 +203,7 @@ public:
             struct
             {
                 uint8_t id;
-                uint8_t seq;
+                uint8_t seq : 7;
             };
             uint16_t raw;
         };
