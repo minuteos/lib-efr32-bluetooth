@@ -741,15 +741,15 @@ async_end
 void Bluetooth::CharacteristicReadRequest::Respond(Span data, AttError error)
 {
     UNUSED auto resp = gecko_cmd_gatt_server_send_user_read_response(connection, characteristic, (uint8_t)error, data.Length(), data);
-    MYDBG("evt_gatt_server_user_read_response: %d, char %04X, sent %d, status %s, data %H",
-        connection, characteristic, resp->sent_len, GetErrorMessage(resp->result), data.Left(resp->sent_len));
+    MYDBG("evt_gatt_server_user_read_response: %d, char %04X, sent %d, status %s, data %H = %s",
+        connection, characteristic, resp->sent_len, GetErrorMessage(error == AttError::OK ? 0 : (uint32_t)bg_errspc_att + (uint32_t)error), data.Left(resp->sent_len), GetErrorMessage(resp->result));
 }
 
 void Bluetooth::CharacteristicWriteRequest::Respond(AttError error)
 {
     UNUSED auto resp = gecko_cmd_gatt_server_send_user_write_response(connection, characteristic, (uint8_t)error);
-    MYDBG("evt_gatt_server_user_write_response: %d, char %04X, status %s",
-        connection, characteristic, GetErrorMessage(resp->result));
+    MYDBG("evt_gatt_server_user_write_response: %d, char %04X, status %s = %s",
+        connection, characteristic, GetErrorMessage(error == AttError::OK ? 0 : (uint32_t)bg_errspc_att + (uint32_t)error), GetErrorMessage(resp->result));
 }
 
 async(Bluetooth::TxAlmostIdle)
