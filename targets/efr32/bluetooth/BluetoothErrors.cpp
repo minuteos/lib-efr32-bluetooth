@@ -3,7 +3,7 @@
  * Licensed under the MIT license. See LICENSE.txt file in the repository root
  * for full license information.
  *
- * efr32/bluetooth/BluetothErrors.cpp
+ * efr32/bluetooth/BluetoothErrors.cpp
  *
  * Implementation of the Bluetooth::GetErrorMessage helper
  */
