@@ -624,7 +624,7 @@ public:
     }
 
     //! Configures the bonding database
-    errorcode_t SetBondingConfuguration(uint32_t maxBondings, bool newReplaceOld)
+    errorcode_t SetBondingConfiguration(uint32_t maxBondings, bool newReplaceOld)
     {
         return ProcessResult(gecko_cmd_sm_store_bonding_configuration(maxBondings, newReplaceOld)->result);
     }
@@ -872,6 +872,11 @@ private:
     async(GeckoOTAControlWriteHandler, CharacteristicWriteRequest& e);
     async(GeckoOTAVersionReadHandler, CharacteristicReadRequest& e);
     async(SystemIDReadHandler, CharacteristicReadRequest& e);
+
+#if Cnvram
+    async(NVConfigEventHandler, CharacteristicEventRequest& e);
+    async(NVConfigWriteHandler, CharacteristicWriteRequest& e);
+#endif
 
     void UpdateBackgroundProcess();
 
