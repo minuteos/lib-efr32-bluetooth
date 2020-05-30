@@ -65,40 +65,19 @@ void Bluetooth::UpdateBackgroundProcess()
         flags |= Flags::ScanningRequested;
     }
 
-    if (!!(flags & Flags::Connecting))
-    {
-        // scanning and advertising must be disabled while connecting, otherwise the stack gets completely confused
-        flags &= ~(Flags::AdvertisingRequested | Flags::ScanningRequested);
-    }
-    else if (connections && !(flags & Flags::KeepDiscoverable))
-    {
-        // do not advertise while connections are active
-        flags &= ~Flags::AdvertisingRequested;
-    }
+    // scanning and advertising must be disabled while connecting, otherwise the stack gets completely confused
+    bool connecting = !!(flags & Flags::Connecting);
+    auto requiredAdvFlags = AdvertisementSet::Flags::Requested | (!!connections * AdvertisementSet::Flags::KeepDiscoverable);
 
-    switch (flags & (Flags::AdvertisingActive | Flags::AdvertisingRequested))
+    for (auto& a: adv)
     {
-        case Flags::AdvertisingActive:
-            MYDBG("le_gap_stop_advertising()");
-            ProcessResult(gecko_cmd_le_gap_stop_advertising(0)->result);
-            this->flags &= ~Flags::AdvertisingActive;
-            break;
+        bool requested = !connecting && (a.flags & requiredAdvFlags) == requiredAdvFlags;
+        bool active = !!(a.flags & AdvertisementSet::Flags::Active);
 
-        case Flags::AdvertisingRequested:
-            if (!!(flags & Flags::AdvUpdate))
-            {
-                // reconfigure advertising
-                MYDBG("le_gap_set_advertise_timing(%d, %d, %d, %d)", advMin, advMax, advTimeout, advCount);
-                ProcessResult(gecko_cmd_le_gap_set_advertise_timing(0, advMin, advMax, advTimeout, advCount)->result);
-                ProcessResult(gecko_cmd_le_gap_set_advertise_channel_map(0, advChannels)->result);
-            }
-            MYTRACE("le_gap_start_advertising(%d, %d)", advDiscover, advConnect);
-            ProcessResult(gecko_cmd_le_gap_start_advertising(0, advDiscover, advConnect)->result);
-            this->flags = (this->flags & ~Flags::AdvUpdate) | Flags::AdvertisingActive;
-            break;
-
-        default:
-            break;
+        if (active != requested)
+        {
+            active ? a.StopImpl() : a.StartImpl();
+        }
     }
 
     switch (flags & (Flags::ScanningActive | Flags::ScanningRequested))
@@ -131,6 +110,27 @@ void Bluetooth::UpdateBackgroundProcess()
         default:
             break;
     }
+}
+
+void Bluetooth::AdvertisementSet::StopImpl()
+{
+    MYDBG("le_gap_stop_advertising(%d)", Index());
+    ProcessResult(gecko_cmd_le_gap_stop_advertising(Index())->result);
+    flags &= ~Flags::Active;
+}
+
+void Bluetooth::AdvertisementSet::StartImpl()
+{
+    if (!!(flags & Flags::Update))
+    {
+        // reconfigure advertising
+        DBGCL("bluetooth", "le_gap_set_advertise_timing(%d, %d, %d, %d, %d)", Index(), min, max, timeout, count);
+        ProcessResult(gecko_cmd_le_gap_set_advertise_timing(Index(), min, max, timeout, count)->result);
+        ProcessResult(gecko_cmd_le_gap_set_advertise_channel_map(Index(), channels)->result);
+    }
+    MYTRACE("le_gap_start_advertising(%d, %d, %d)", Index(), discover, connect);
+    ProcessResult(gecko_cmd_le_gap_start_advertising(Index(), discover, connect)->result);
+    flags = (flags & ~Flags::Update) | Flags::Active;
 }
 
 async(Bluetooth::Init)
@@ -290,7 +290,10 @@ async_def()
                     SETBIT(connections, e.connection);
 
                     // advertising automatically stops when a connection is open, restore what needs to be restored
-                    flags &= ~Flags::AdvertisingActive;
+                    for (auto& a: adv)
+                    {
+                        a.flags &= ~AdvertisementSet::Flags::Active;
+                    }
                     UpdateBackgroundProcess();
 
                     auto &ci = *GetConnectionInfo(e.connection);
@@ -454,8 +457,11 @@ async_def()
                 }
 
                 case EVENT_ID(gecko_evt_le_gap_adv_timeout_id):
-                    this->flags &= ~(Flags::AdvertisingActive | Flags::AdvertisingRequested);
+                {
+                    auto &e = evt->data.evt_le_gap_adv_timeout;
+                    adv[e.handle].flags &= ~(AdvertisementSet::Flags::Active | AdvertisementSet::Flags::Requested);
                     break;
+                }
 
                 case EVENT_ID(gecko_evt_le_gap_scan_request_id):
                 {

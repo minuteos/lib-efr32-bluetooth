@@ -21,6 +21,10 @@
 #define BLUETOOTH_MAX_CONNECTIONS	4
 #endif
 
+#ifndef BLUETOOTH_MAX_ADVERTISERS
+#define BLUETOOTH_MAX_ADVERTISERS   1
+#endif
+
 #ifndef BLUETOOTH_ADDITIONAL_HEAP
 #define BLUETOOTH_ADDITIONAL_HEAP	4096
 #endif
@@ -416,75 +420,144 @@ public:
         NonScannable = le_gap_connectable_non_scannable,
     };
 
-    //! Sets advertisement PHY
-    errorcode_t SetAdvertisementPHY(PHY primary, PHY secondary = PHY1M)
+    class AdvertisementSet
     {
-        return ProcessResult(gecko_cmd_le_gap_set_advertise_phy(0, primary, secondary)->result);
-    }
+    public:
+#if BLUETOOTH_MAX_ADVERTISERS > 1
+        //! Gets the index of this advertisement set
+        uint8_t Index() const;
+#else
+        //! Gets the index of this advertisement set
+        constexpr uint8_t Index() const { return 0; }
+#endif
+
+        //! Sets advertisement PHY
+        errorcode_t SetAdvertisementPHY(PHY primary, PHY secondary = PHY1M)
+        {
+            return ProcessResult(gecko_cmd_le_gap_set_advertise_phy(Index(), primary, secondary)->result);
+        }
+
+        //! Sets custom advertisement data
+        errorcode_t SetAdvertisementData(Span data)
+        {
+            ASSERT(data.Length() <= 30);
+            return ProcessResult(gecko_cmd_le_gap_bt5_set_adv_data(Index(), 0, data.Length(), data)->result);
+        }
+
+        //! Sets custom scan response data
+        errorcode_t SetScanResponseData(Span data)
+        {
+            ASSERT(data.Length() <= 30);
+            return ProcessResult(gecko_cmd_le_gap_bt5_set_adv_data(Index(), 1, data.Length(), data)->result);
+        }
+
+        //! Configures advertisement interval duration in milliseconds
+        void SetAdvertisementInterval(float tMin, float tMax = 0)
+        {
+            uint32_t min = tMin / 0.625f, max = tMax < tMin ? min : (tMax / 0.625f);
+            ASSERT(min >= 0x20 && min <= 0x4000);
+            ASSERT(max >= 0x20 && max <= 0x4000);
+            this->min = min;
+            this->max = max;
+            flags |= Flags::Update;
+        }
+
+        //! Configures the channels used for advertising
+        void SetAdvertisementChannels(uint8_t channelMask = 7)
+        {
+            ASSERT(!(channelMask & 7));
+            channels = channelMask;
+            flags |= Flags::Update;
+        }
+
+        //! Configures advertisement timeout (time after which advertising stops)
+        void SetAdvertisementTimeout(float t)
+        {
+            ASSERT(t >= 0 && t <= 655.35f);
+            timeout = t * 100;
+            flags |= Flags::Update;
+        }
+
+        //! Configures number of advertisements sent before stopping
+        void SetAdvertisementCount(uint8_t count)
+        {
+            count = count;
+            flags |= Flags::Update;
+        }
+
+        //! Starts advertising
+        void StartAdvertising(Discoverable discover, Connectable connect, bool keep = false);
+        //! Stops advertising
+        void StopAdvertising();
+
+    private:
+        AdvertisementSet() {}
+
+        enum struct Flags : uint8_t
+        {
+            None = 0,
+
+            KeepDiscoverable = BIT(0),      //< Whether to keep advertising even while a connection is open
+            Update = BIT(1),                //< Advertisement parameters have changed
+            Requested = BIT(2),             //< Advertising is requested
+            Active = BIT(3),                //< Advertising is currently active
+        };
+
+        DECLARE_FLAG_ENUM(Flags);
+
+        uint32_t min = 160, max = 160;      //< Advertising interval in native BLE units (625 us), default 100 ms
+        uint16_t timeout = 0;               //< Advertisement timeout
+        uint8_t count = 0;                  //< Advertisement count limit
+        uint8_t channels = 7;               //< Advertising channel mask
+        uint8_t discover = 0;               //< Advertised discoverability mode
+        uint8_t connect = 0;                //< Advertised connectability mode
+        Flags flags = Flags::None;          //< Various state flags, see above
+
+        friend class Bluetooth;
+
+        void StopImpl();
+        void StartImpl();
+    };
+
+    //! Gets the specified advertiser configuration
+    ALWAYS_INLINE AdvertisementSet& Advertiser(unsigned index = 0)
+        { ASSERT(index < BLUETOOTH_MAX_ADVERTISERS); return adv[index]; }
+
+    //! Sets advertisement PHY
+    ALWAYS_INLINE errorcode_t SetAdvertisementPHY(PHY primary, PHY secondary = PHY1M)
+        { return adv[0].SetAdvertisementPHY(primary, secondary); }
 
     //! Sets custom advertisement data
-    errorcode_t SetAdvertisementData(Span data)
-    {
-        ASSERT(data.Length() <= 30);
-        return ProcessResult(gecko_cmd_le_gap_bt5_set_adv_data(0, 0, data.Length(), data)->result);
-    }
+    ALWAYS_INLINE errorcode_t SetAdvertisementData(Span data)
+        { return adv[0].SetAdvertisementData(data); }
 
     //! Sets custom scan response data
-    errorcode_t SetScanResponseData(Span data)
-    {
-        ASSERT(data.Length() <= 30);
-        return ProcessResult(gecko_cmd_le_gap_bt5_set_adv_data(0, 1, data.Length(), data)->result);
-    }
+    ALWAYS_INLINE errorcode_t SetScanResponseData(Span data)
+        { return adv[0].SetScanResponseData(data); }
 
     //! Configures advertisement interval duration in milliseconds
-    void SetAdvertisementInterval(float tMin, float tMax = 0)
-    {
-        uint32_t min = tMin / 0.625f, max = tMax < tMin ? min : (tMax / 0.625f);
-        ASSERT(min >= 0x20 && min <= 0x4000);
-        ASSERT(max >= 0x20 && max <= 0x4000);
-        advMin = min;
-        advMax = max;
-        flags |= Flags::AdvUpdate;
-    }
+    ALWAYS_INLINE void SetAdvertisementInterval(float tMin, float tMax = 0)
+        { return adv[0].SetAdvertisementInterval(tMin, tMax); }
 
     //! Configures the channels used for advertising
-    void SetAdvertisementChannels(uint8_t channelMask = 7)
-    {
-        ASSERT(!(channelMask & 7));
-        advChannels = channelMask;
-        flags |= Flags::AdvUpdate;
-    }
+    ALWAYS_INLINE void SetAdvertisementChannels(uint8_t channelMask = 7)
+        { return adv[0].SetAdvertisementChannels(channelMask); }
 
     //! Configures advertisement timeout (time after which advertising stops)
-    void SetAdvertisementTimeout(float t)
-    {
-        ASSERT(t >= 0 && t <= 655.35f);
-        advTimeout = t * 100;
-        flags |= Flags::AdvUpdate;
-    }
+    ALWAYS_INLINE void SetAdvertisementTimeout(float t)
+        { return adv[0].SetAdvertisementTimeout(t); }
 
     //! Configures number of advertisements sent before stopping
-    void SetAdvertisementCount(uint8_t count)
-    {
-        advCount = count;
-        flags |= Flags::AdvUpdate;
-    }
+    ALWAYS_INLINE void SetAdvertisementCount(uint8_t count)
+        { return adv[0].SetAdvertisementCount(count); }
 
     //! Starts advertising
-    void StartAdvertising(Discoverable discover, Connectable connect, bool keep = false)
-    {
-        advDiscover = (uint8_t)discover;
-        advConnect = (uint8_t)connect;
-        flags = (flags & ~Flags::KeepDiscoverable) | Flags::AdvertisingRequested | (keep * Flags::KeepDiscoverable);
-        UpdateBackgroundProcess();
-    }
+    ALWAYS_INLINE void StartAdvertising(Discoverable discover, Connectable connect, bool keep = false)
+        { return adv[0].StartAdvertising(discover, connect, keep); }
 
     //! Stops advertising
-    void StopAdvertising()
-    {
-        flags &= ~Flags::AdvertisingRequested;
-        UpdateBackgroundProcess();
-    }
+    ALWAYS_INLINE void StopAdvertising()
+        { return adv[0].StopAdvertising(); }
 
     //! Configures the preferred and accepted PHYs to be used for connections
     errorcode_t SetConnectionPHY(PHY preferred, PHY accepted)
@@ -661,14 +734,10 @@ private:
     {
         None = 0,
         Initialized = BIT(0),               //< Set to true once the stack initialization is complete
-        KeepDiscoverable = BIT(1),          //< Whether to keep advertising even while a connection is open
-        AdvUpdate = BIT(2),                 //< Advertisement parameters have changed
-        ScanUpdate = BIT(3),                //< Scanning parameters have changed
-        Connecting = BIT(4),                //< An outgoing connection is currently pending
-        ScanningRequested = BIT(5),         //< Scanning for advertisements is requested
-        ScanningActive = BIT(6),            //< Scanning for advertisements is currently active
-        AdvertisingRequested = BIT(7),      //< Advertising is requested
-        AdvertisingActive = BIT(8),         //< Advertising is currently active
+        ScanUpdate = BIT(1),                //< Scanning parameters have changed
+        Connecting = BIT(2),                //< An outgoing connection is currently pending
+        ScanningRequested = BIT(3),         //< Scanning for advertisements is requested
+        ScanningActive = BIT(4),            //< Scanning for advertisements is currently active
 
         ScanningRequestedAndActive = ScanningRequested | ScanningActive,
     };
@@ -722,15 +791,10 @@ private:
     Flags flags = Flags::None;              //< Various state flags, see above
     bool event = false;                     //< Event handler trigger from stack
     bool llEvent = false;                   //< Event handler trigger from interrupt
-    uint8_t advDiscover = 0;                //< Advertised discoverability mode
-    uint8_t advConnect = 0;                 //< Advertised connectability mode
-    uint8_t advChannels = 7;                //< Advertising channel mask
-    uint32_t advMin = 160, advMax = 160;    //< Advertising interval
-    uint16_t advTimeout = 0;                //< Advertisement timeout
-    uint8_t advCount = 0;                   //< Advertisement count limit
     uint32_t connections = 0;               //< Active connections mask
     int ioBuffers;                          //< Total count of I/O buffers
     int bufferSize;                         //< I/O buffer size
+    AdvertisementSet adv[BLUETOOTH_MAX_ADVERTISERS];
     LinkedList<AttributeHandler> handlers;
     LinkedList<Scanner> scanners;
     LinkedList<Delegate<void>> beforeReset;
@@ -853,7 +917,7 @@ private:
     static void ScheduleLL();
     static void ScheduleMain();
 
-    DEBUG_NO_INLINE errorcode_t ProcessResult(uint16_t res)
+    DEBUG_NO_INLINE static errorcode_t ProcessResult(uint16_t res)
     {
         // arguments are validated, there should never be an error result
         if (res)
@@ -886,6 +950,7 @@ private:
 DEFINE_FLAG_ENUM(Bluetooth::PHY);
 DEFINE_FLAG_ENUM(Bluetooth::Flags);
 DEFINE_FLAG_ENUM(Bluetooth::ConnectionFlags);
+DEFINE_FLAG_ENUM(Bluetooth::AdvertisementSet::Flags);
 
 extern Bluetooth bluetooth;
 
@@ -910,3 +975,25 @@ ALWAYS_INLINE async(Bluetooth::IncomingConnection::SendNotification, Characteris
     { return async_forward(bluetooth.SendCharacteristicNotification, *this, characteristic, value); }
 ALWAYS_INLINE async(Bluetooth::Connection::Close)
     { return async_forward(bluetooth.CloseConnection, *this); }
+
+#if BLUETOOTH_MAX_ADVERTISERS > 1
+ALWAYS_INLINE uint8_t Bluetooth::AdvertisementSet::Index() const { return this - bluetooth.adv; }
+#endif
+
+inline void Bluetooth::AdvertisementSet::StartAdvertising(Discoverable discover, Connectable connect, bool keep)
+{
+    this->discover = (uint8_t)discover;
+    this->connect = (uint8_t)connect;
+    flags |= Flags::Requested | (keep * Flags::KeepDiscoverable);
+    if (!keep)
+    {
+        flags &= ~Flags::KeepDiscoverable;
+    }
+    bluetooth.UpdateBackgroundProcess();
+}
+
+inline void Bluetooth::AdvertisementSet::StopAdvertising()
+{
+    flags &= ~Flags::Requested;
+    bluetooth.UpdateBackgroundProcess();
+}
