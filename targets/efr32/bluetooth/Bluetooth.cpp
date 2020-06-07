@@ -863,16 +863,16 @@ async_def(uint32_t running)
 }
 async_end
 
-async(Bluetooth::Connect, bd_addr address, mono_t timeout, PHY phy)
+async(Bluetooth::Connect, bd_addr address, Timeout timeout, PHY phy)
 async_def(
-    mono_t waitUntil;
+    Timeout timeout;
     ConnectionInfo* connection;
     OutgoingConnection res;
 )
 {
-    f.waitUntil = MONO_CLOCKS + timeout;
+    f.timeout = timeout.MakeAbsolute();
 
-    if (!await_acquire_until(flags, Flags::Connecting, f.waitUntil))
+    if (!await_acquire_timeout(flags, Flags::Connecting, f.timeout))
     {
         MYDBG("Cannot connect to %-H - timeout waiting for other connections to complete", Span(address));
         async_return(false);
@@ -894,7 +894,7 @@ async_def(
         f.connection->flags = ConnectionFlags::Connecting;
         f.connection->procedure.type = GattProcedure::Connection;
         f.connection->procedure.connect = &f.res;
-        if (!await_mask_until(f.connection->flags, ConnectionFlags::Connecting, 0, f.waitUntil))
+        if (!await_mask_timeout(f.connection->flags, ConnectionFlags::Connecting, 0, f.timeout))
         {
             CONDBG(f.connection, "Timed out");
             await(CloseConnectionImpl, f.connection, ConnectionFlags::Connecting);

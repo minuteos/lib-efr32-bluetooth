@@ -604,7 +604,7 @@ public:
 
     //! Tries to connect to the peripheral with the specified address
     //! @returns A valid @ref OutgoingConnection object if connection succeeded
-    async(Connect, bd_addr address, mono_t timeout, PHY phy = PHY1M);
+    async(Connect, bd_addr address, Timeout timeout, PHY phy = PHY1M);
 
     //! Closes an active connection
     async(CloseConnection, Connection connection);
