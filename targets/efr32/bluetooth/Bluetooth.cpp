@@ -40,6 +40,7 @@ struct BluetoothConfig : gecko_configuration_t
         bluetooth.heap = heap;
         bluetooth.heap_size = sizeof(heap);
         bluetooth.max_connections = BLUETOOTH_MAX_CONNECTIONS;
+        bluetooth.max_advertisers = BLUETOOTH_MAX_ADVERTISERS;
         scheduler_callback = Bluetooth::ScheduleLL;
         stack_schedule_callback = Bluetooth::ScheduleMain;
         gattdb = bg_gattdb;
@@ -739,7 +740,14 @@ async_def()
             }
         }
 
-        await_signal_ticks(event, std::min((mono_t)MONO_SIGNED_MAX, gecko_can_sleep_ticks()));
+        if (Initialized())
+        {
+            await_signal_ticks(event, std::min((mono_t)MONO_SIGNED_MAX, gecko_can_sleep_ticks()));
+        }
+        else
+        {
+            async_yield();
+        }
     }
 }
 async_end
