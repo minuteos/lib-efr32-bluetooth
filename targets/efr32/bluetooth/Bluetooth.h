@@ -481,7 +481,7 @@ public:
         //! Configures number of advertisements sent before stopping
         void SetAdvertisementCount(uint8_t count)
         {
-            count = count;
+            this->count = count;
             flags |= Flags::Update;
         }
 
