@@ -959,7 +959,7 @@ async_def(unsigned retry)
         auto rsp = gecko_cmd_le_connection_close(GetConnectionIndex(connection));
         if (rsp->result != bg_err_success)
         {
-            CONDBG(connection, "Failed to close connection: %s", rsp->result);
+            CONDBG(connection, "Failed to close connection: %s", GetErrorMessage(rsp->result));
         }
 
         if (!await_mask_ms(connection->flags, activeFlag, 0, 500))
