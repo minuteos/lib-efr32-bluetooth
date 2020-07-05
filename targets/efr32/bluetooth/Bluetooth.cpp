@@ -285,8 +285,8 @@ async_def()
                 case EVENT_ID(gecko_evt_le_connection_opened_id):
                 {
                     auto &e = evt->data.evt_le_connection_opened;
-                    MYDBG("evt_le_connection_opened: %d, %s %-H (%d), bonding %d",
-                        e.connection, e.master ? "to" : "from", Span(e.address), e.address_type, (int8_t)e.bonding);
+                    CONDBG(e.connection, "evt_le_connection_opened: %s %-H (%d), bonding %d",
+                        e.master ? "to" : "from", Span(e.address), e.address_type, (int8_t)e.bonding);
 
                     SETBIT(connections, e.connection);
 
@@ -324,8 +324,8 @@ async_def()
                 case EVENT_ID(gecko_evt_le_connection_closed_id):
                 {
                     auto &e = evt->data.evt_le_connection_closed;
-                    MYDBG("evt_le_connection_closed: %d, reason %s",
-                        e.connection, GetErrorMessage(e.reason));
+                    CONDBG(e.connection, "evt_le_connection_closed: %s",
+                        GetErrorMessage(e.reason));
 
                     RESBIT(connections, e.connection);
                     // restore advertising if requested
@@ -371,8 +371,8 @@ async_def()
                 case EVENT_ID(gecko_evt_le_connection_parameters_id):
                 {
                     auto &e = evt->data.evt_le_connection_parameters;
-                    MYDBG("evt_le_connection_parameters: %d, txsize %d, interval %.2q ms, latency %d, timeout %d ms, security %d",
-                        e.connection, e.txsize, e.interval * 125, e.latency, e.timeout * 10, e.security_mode);
+                    CONDBG(e.connection, "evt_le_connection_parameters: txsize %d, interval %.2q ms, latency %d, timeout %d ms, security %d",
+                        e.txsize, e.interval * 125, e.latency, e.timeout * 10, e.security_mode);
 
                     auto &ci = *GetConnectionInfo(e.connection);
                     ci.interval = e.interval;
@@ -386,8 +386,8 @@ async_def()
                 case EVENT_ID(gecko_evt_le_connection_rssi_id):
                 {
                     auto &e = evt->data.evt_le_connection_rssi;
-                    MYDBG("evt_le_connection_rssi: %d, status %d, RSSI %d",
-                        e.connection, e.status, e.rssi);
+                    CONDBG(e.connection, "evt_le_connection_rssi: %d, status %d",
+                        e.rssi, e.status);
 
                     auto &ci = *GetConnectionInfo(e.connection);
                     ci.rssi = e.rssi;
@@ -397,8 +397,8 @@ async_def()
                 case EVENT_ID(gecko_evt_le_connection_phy_status_id):
                 {
                     auto &e = evt->data.evt_le_connection_phy_status;
-                    MYDBG("evt_le_connection_phy_status: %d, status %d",
-                        e.connection, e.phy);
+                    CONDBG(e.connection, "evt_le_connection_phy_status: %d",
+                        e.phy);
 
                     auto &ci = *GetConnectionInfo(e.connection);
                     ci.phy = PHY(e.phy);
@@ -484,8 +484,8 @@ async_def()
                 case EVENT_ID(gecko_evt_gatt_mtu_exchanged_id):
                 {
                     auto &e = evt->data.evt_gatt_mtu_exchanged;
-                    MYDBG("evt_gatt_mtu_exchanged: %d, MTU %d",
-                        e.connection, e.mtu);
+                    CONDBG(e.connection, "evt_gatt_mtu_exchanged: %d",
+                        e.mtu);
 
                     GetConnectionInfo(e.connection)->mtu = e.mtu;
                     break;
@@ -494,8 +494,8 @@ async_def()
                 case EVENT_ID(gecko_evt_gatt_service_id):
                 {
                     UNUSED auto &e = evt->data.evt_gatt_service;
-                    MYDBG("evt_gatt_service: %d, %H == %08X",
-                        e.connection, Span(e.uuid.data, e.uuid.len), e.service);
+                    CONDBG(e.connection, "evt_gatt_service: %H == %08X",
+                        Span(e.uuid.data, e.uuid.len), e.service);
 
                     auto& ci = *GetConnectionInfo(e.connection);
                     if (ci.procedure.type == GattProcedure::DiscoverService && ci.procedure.service)
@@ -508,8 +508,8 @@ async_def()
                 case EVENT_ID(gecko_evt_gatt_characteristic_id):
                 {
                     UNUSED auto &e = evt->data.evt_gatt_characteristic;
-                    MYDBG("evt_gatt_characteristic: %d, %H = %04X, props %X",
-                        e.connection, Span(e.uuid.data, e.uuid.len), e.characteristic, e.properties);
+                    CONDBG(e.connection, "evt_gatt_characteristic: %H = %04X, props %X",
+                        Span(e.uuid.data, e.uuid.len), e.characteristic, e.properties);
 
                     auto& ci = *GetConnectionInfo(e.connection);
                     if (ci.procedure.type == GattProcedure::DiscoverCharacteristic && ci.procedure.characteristic)
@@ -554,8 +554,8 @@ async_def()
                 case EVENT_ID(gecko_evt_gatt_procedure_completed_id):
                 {
                     UNUSED auto &e = evt->data.evt_gatt_procedure_completed;
-                    MYDBG("evt_gatt_procedure_completed: %d, %s",
-                        e.connection, GetErrorMessage(e.result));
+                    CONDBG(e.connection, "evt_gatt_procedure_completed: %s",
+                        GetErrorMessage(e.result));
 
                     auto& ci = *GetConnectionInfo(e.connection);
                     if (!!(ci.flags & ConnectionFlags::ProcedureRunning))
@@ -578,8 +578,8 @@ async_def()
                 case EVENT_ID(gecko_evt_gatt_server_attribute_value_id):
                 {
                     auto &e = evt->data.evt_gatt_server_attribute_value;
-                    MYDBG("evt_gatt_server_attribute_value: %d, attr %04X, op %d, offset %d, data %H",
-                        e.connection, e.attribute, e.att_opcode, e.offset, Span(e.value.data, e.value.len));
+                    CONDBG(e.connection, "evt_gatt_server_attribute_value: %04X, op %d, offset %d, data %H",
+                        e.attribute, e.att_opcode, e.offset, Span(e.value.data, e.value.len));
 
                     if (auto handler = FindHandler(handlers, e.attribute, AttributeHandlerType::ValueChange))
                     {
@@ -596,8 +596,8 @@ async_def()
                 case EVENT_ID(gecko_evt_gatt_server_user_read_request_id):
                 {
                     auto &e = evt->data.evt_gatt_server_user_read_request;
-                    MYDBG("evt_gatt_server_user_read_request: %d, char %04X, op %d, offset %d",
-                        e.connection, e.characteristic, e.att_opcode, e.offset);
+                    CONDBG(e.connection, "evt_gatt_server_user_read_request: %04X, op %d, offset %d",
+                        e.characteristic, e.att_opcode, e.offset);
 
                     if (auto handler = FindHandler(handlers, e.characteristic, AttributeHandlerType::ReadRequest))
                     {
@@ -619,8 +619,8 @@ async_def()
                 case EVENT_ID(gecko_evt_gatt_server_user_write_request_id):
                 {
                     auto &e = evt->data.evt_gatt_server_user_write_request;
-                    MYDBG("evt_gatt_server_user_write_request: %d, char %04X, op %d, offset %d, data %H",
-                        e.connection, e.characteristic, e.att_opcode, e.offset, Span(e.value.data, e.value.len));
+                    CONDBG(e.connection, "evt_gatt_server_user_write_request: %04X, op %d, offset %d, data %H",
+                        e.characteristic, e.att_opcode, e.offset, Span(e.value.data, e.value.len));
 
                     if (auto handler = FindHandler(handlers, e.characteristic, AttributeHandlerType::WriteRequest))
                     {
@@ -642,7 +642,8 @@ async_def()
                 case EVENT_ID(gecko_evt_gatt_server_characteristic_status_id):
                 {
                     auto &e = evt->data.evt_gatt_server_characteristic_status;
-                    MYDBG("evt_gatt_server_characteristic_status: %d, char %04X, status %x, client %x", e.connection, e.characteristic, e.status_flags, e.client_config_flags);
+                    CONDBG(e.connection, "evt_gatt_server_characteristic_status: %04X, status %x, client %x",
+                        e.characteristic, e.status_flags, e.client_config_flags);
 
                     if (e.status_flags & gatt_server_client_config)
                     {
@@ -661,7 +662,8 @@ async_def()
                 case EVENT_ID(gecko_evt_gatt_server_execute_write_completed_id):
                 {
                     UNUSED auto &e = evt->data.evt_gatt_server_execute_write_completed;
-                    MYDBG("evt_gatt_server_execute_write_completed: %d, result %s", e.connection, GetErrorMessage(e.result));
+                    CONDBG(e.connection, "evt_gatt_server_execute_write_completed: %s",
+                        GetErrorMessage(e.result));
                     break;
                 }
 
@@ -677,28 +679,31 @@ async_def()
                 case EVENT_ID(gecko_evt_sm_passkey_display_id):
                 {
                     UNUSED auto &e = evt->data.evt_sm_passkey_display;
-                    MYDBG("evt_sm_passkey_display: %d, %06d", e.connection, e.passkey);
+                    CONDBG(e.connection, "evt_sm_passkey_display: %06d",
+                        e.passkey);
                     break;
                 }
 
                 case EVENT_ID(gecko_evt_sm_passkey_request_id):
                 {
                     UNUSED auto &e = evt->data.evt_sm_passkey_request;
-                    MYDBG("evt_sm_passkey_request: %d", e.connection);
+                    CONDBG(e.connection, "evt_sm_passkey_request");
                     break;
                 }
 
                 case EVENT_ID(gecko_evt_sm_confirm_passkey_id):
                 {
                     UNUSED auto &e = evt->data.evt_sm_confirm_passkey;
-                    MYDBG("evt_sm_confirm_passkey: %d, %06d", e.connection, e.passkey);
+                    CONDBG(e.connection, "evt_sm_confirm_passkey: %06d",
+                        e.passkey);
                     break;
                 }
 
                 case EVENT_ID(gecko_evt_sm_bonded_id):
                 {
                     auto &e = evt->data.evt_sm_bonded;
-                    MYDBG("evt_sm_bonded: %d, bonding %d", e.connection, e.bonding);
+                    CONDBG(e.connection, "evt_sm_bonded: %d",
+                        e.bonding);
 
                     GetConnectionInfo(e.connection)->bonding = e.bonding;
                     break;
@@ -706,7 +711,8 @@ async_def()
                 case EVENT_ID(gecko_evt_sm_bonding_failed_id):
                 {
                     auto &e = evt->data.evt_sm_bonding_failed;
-                    MYDBG("evt_sm_bonding_failed: %d, reason %s", e.connection, GetErrorMessage(e.reason));
+                    CONDBG(e.connection, "evt_sm_bonding_failed: reason %s",
+                        GetErrorMessage(e.reason));
 
                     auto &con = *GetConnectionInfo(e.connection);
                     if (e.reason == bg_err_smp_pairing_not_supported && con.bonding != -1)
@@ -724,7 +730,8 @@ async_def()
                 case EVENT_ID(gecko_evt_sm_confirm_bonding_id):
                 {
                     UNUSED auto &e = evt->data.evt_sm_confirm_bonding;
-                    MYDBG("evt_sm_confirm_bonding: %d, bonding %d", e.connection, e.bonding_handle);
+                    CONDBG(e.connection, "evt_sm_confirm_bonding: %d",
+                        e.bonding_handle);
                     break;
                 }
 
@@ -755,15 +762,15 @@ async_end
 void Bluetooth::CharacteristicReadRequest::Respond(Span data, AttError error)
 {
     UNUSED auto resp = gecko_cmd_gatt_server_send_user_read_response(connection, characteristic, (uint8_t)error, data.Length(), data);
-    MYDBG("evt_gatt_server_user_read_response: %d, char %04X, sent %d, status %s, data %H = %s",
-        connection, characteristic, resp->sent_len, GetErrorMessage(error == AttError::OK ? 0 : (uint32_t)bg_errspc_att + (uint32_t)error), data.Left(resp->sent_len), GetErrorMessage(resp->result));
+    CONDBG(connection, "evt_gatt_server_user_read_response: %04X, sent %d, status %s, data %H = %s",
+        characteristic, resp->sent_len, GetErrorMessage(error == AttError::OK ? 0 : (uint32_t)bg_errspc_att + (uint32_t)error), data.Left(resp->sent_len), GetErrorMessage(resp->result));
 }
 
 void Bluetooth::CharacteristicWriteRequest::Respond(AttError error)
 {
     UNUSED auto resp = gecko_cmd_gatt_server_send_user_write_response(connection, characteristic, (uint8_t)error);
-    MYDBG("evt_gatt_server_user_write_response: %d, char %04X, status %s = %s",
-        connection, characteristic, GetErrorMessage(error == AttError::OK ? 0 : (uint32_t)bg_errspc_att + (uint32_t)error), GetErrorMessage(resp->result));
+    CONDBG(connection, "evt_gatt_server_user_write_response: %04X, status %s = %s",
+        characteristic, GetErrorMessage(error == AttError::OK ? 0 : (uint32_t)bg_errspc_att + (uint32_t)error), GetErrorMessage(resp->result));
 }
 
 async(Bluetooth::TxAlmostIdle)
@@ -787,7 +794,8 @@ res_pair_t Bluetooth::SendNotificationImpl(uint32_t connectionAndCharacteristic,
     auto res = gecko_cmd_gatt_server_send_characteristic_notification(connection, characteristic, data.Length(), data);
     if (res->result != bg_err_success)
     {
-        MYDBG("gecko_cmd_gatt_server_send_characteristic_notification: %d %04X %H = %s", connection, characteristic, data, GetErrorMessage(res->result));
+        CONDBG(connection, "gecko_cmd_gatt_server_send_characteristic_notification: %04X %H = %s",
+            characteristic, data, GetErrorMessage(res->result));
     }
     return RES_PAIR(res->result, res->sent_len);
 }
@@ -985,6 +993,10 @@ async_end
 
 errorcode_t Bluetooth::OutgoingConnection::GetLastError() const
 {
+    if (isError)
+    {
+        return (errorcode_t)error;
+    }
     auto conn = bluetooth.GetConnectionInfo(*this);
     if (seq != conn->seq)
     {

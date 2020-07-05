@@ -277,6 +277,7 @@ public:
         async(WriteWithoutResponse, Characteristic characteristic, Span value);
 
         errorcode_t GetLastError() const;
+        const char* GetLastErrorMessage() const { return GetErrorMessage(GetLastError()); }
 
         friend class Bluetooth;
     };
@@ -883,6 +884,8 @@ private:
         ASSERT(con >= connectionInfo && con < endof(connectionInfo));
         return con - connectionInfo + 1;
     }
+
+    static constexpr uint8_t GetConnectionIndex(uint8_t index) { return index; }
 
     ALWAYS_INLINE const ConnectionInfo* GetConnectionInfo(uint8_t id) const
     {
