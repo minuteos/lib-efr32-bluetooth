@@ -48,4 +48,14 @@ uint32_t sl_sleeptimer_ms32_to_tick(uint32_t time_ms, uint32_t *tick)
     return 0;
 }
 
+OPTIMIZE void* sl_malloc(size_t size) { return malloc(size); }
+OPTIMIZE void* sl_calloc(size_t num, size_t size) { return calloc(num, size); }
+OPTIMIZE void sl_free(void* ptr) { free(ptr); }
+
+OPTIMIZE void bg_malloc_init() {}
+OPTIMIZE void* bg_malloc(size_t size) { return calloc((size + 3) & ~3, 1); }
+void* bg_calloc(size_t size) __attribute__((alias("sl_calloc")));
+void* bg_zalloc(size_t size) __attribute__((alias("bg_malloc")));
+void bg_free(void* ptr) __attribute__((alias("sl_free")));
+
 END_EXTERN_C
