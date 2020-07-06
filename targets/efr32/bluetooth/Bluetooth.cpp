@@ -753,6 +753,9 @@ async_def()
                 MYDBG("unknown event: %08X %H", evt->header, data);
                 break;
             }
+
+            // yield after every event
+            async_yield();
         }
 
         if (Initialized())
