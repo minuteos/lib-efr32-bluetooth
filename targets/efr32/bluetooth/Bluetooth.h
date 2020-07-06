@@ -213,12 +213,9 @@ public:
         };
 
         constexpr Connection(uint8_t id, uint8_t seq)
-            : id(id), seq(seq) {}
+            : raw(id | ((seq & 0x7F) << 8)) {}
 
-        constexpr Connection(bool isError, uint16_t error)
-            : error(error), isError(error) {}
-
-        constexpr static Connection Error(uint16_t error) { return Connection(!!error, error); }
+        constexpr static Connection Error(uint16_t error) { return Connection(error ? error | BIT(15) : 0); }
 
     public:
         constexpr Connection(uint16_t rawValue = 0)
