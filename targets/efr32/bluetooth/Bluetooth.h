@@ -931,7 +931,7 @@ private:
     RES_PAIR_DECL(SendNotificationImpl, uint32_t connectionAndCharacteristic, Span data);
 
     async(BeginProcedure, OutgoingConnection connection, GattProcedure procedure);
-    async(CloseConnectionImpl, ConnectionInfo* connection, ConnectionFlags activeFlag);
+    async(CloseConnectionImpl, ConnectionInfo* connection);
 
     async(GeckoOTAControlWriteHandler, CharacteristicWriteRequest& e);
     async(GeckoOTAVersionReadHandler, CharacteristicReadRequest& e);

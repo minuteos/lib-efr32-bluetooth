@@ -302,6 +302,10 @@ async_def()
                     {
                         *ci.procedure.connect = OutgoingConnection(e.connection, ++ci.seq);
                     }
+                    else if (e.master)
+                    {
+                        CONDBG(e.connection, "ERROR: connection opened unexpectedly");
+                    }
                     ci.flags = ConnectionFlags::Connected | (ConnectionFlags::Master * e.master);
                     ci.error = 0;
                     ci.procedure.type = GattProcedure::Idle;
@@ -343,14 +347,18 @@ async_def()
                         gecko_cmd_system_reset(2);
                     }
 #endif
+                    // this can happen twice during connection procedure,
+                    // if the close event with an error arrives within the same batch
+                    // as the connection event
+                    if (ci.procedure.type == GattProcedure::Connection && ci.procedure.connect)
+                    {
+                        *ci.procedure.connect = Connection::Error(e.reason);
+                    }
+
                     if (!!(ci.flags & ConnectionFlags::Connecting))
                     {
                         CONDBG(&ci, "Connection aborted: %s", GetErrorMessage(e.reason));
                         ci.error = e.reason;
-                        if (ci.procedure.type == GattProcedure::Connection && ci.procedure.connect)
-                        {
-                            *ci.procedure.connect = Connection::Error(e.reason);
-                        }
                         flags &= ~Flags::Connecting;
                     }
                     else if (!!(ci.flags & ConnectionFlags::ProcedureRunning))
@@ -895,17 +903,17 @@ async_def(
     }
 
     UpdateBackgroundProcess();  // turn off scanning and advertising
-    MYDBG("Connecting to %-H...", Span(address));
 
     auto rsp = gecko_cmd_le_gap_connect(address, le_gap_address_type_public, phy);
     f.res = Connection::Error(rsp->result);
 
     if (rsp->result != bg_err_success)
     {
-        MYDBG("Connection failed immediately: %s", GetErrorMessage(rsp->result));
+        MYDBG("Connection to %-H failed immediately: %s", Span(address), GetErrorMessage(rsp->result));
     }
     else
     {
+        CONDBG(rsp->connection, "Connecting to %-H...", Span(address));
         f.connection = GetConnectionInfo(rsp->connection);
         f.connection->flags = ConnectionFlags::Connecting;
         f.connection->procedure.type = GattProcedure::Connection;
@@ -913,21 +921,34 @@ async_def(
         if (!await_mask_timeout(f.connection->flags, ConnectionFlags::Connecting, 0, f.timeout))
         {
             CONDBG(f.connection, "Timed out");
-            await(CloseConnectionImpl, f.connection, ConnectionFlags::Connecting);
-            f.res = Connection::Error(bg_err_gatt_connection_timeout);
+            auto rsp = gecko_cmd_le_connection_close(GetConnectionIndex(f.connection));
+            if (rsp->result != bg_err_success)
+            {
+                CONDBG(f.connection, "Failed to abort connection: %s", GetErrorMessage(rsp->result));
+            }
+            if (!await_mask_sec(f.connection->flags, ConnectionFlags::Connecting, 0, 1))
+            {
+                CONDBG(f.connection, "FORCING end of connection attempt");
+                f.connection->flags &= ~ConnectionFlags::Connecting;
+                f.res = Connection::Error(bg_err_gatt_connection_timeout);
+            }
+            else if (f.res == Connection::Error(bg_err_bt_unknown_connection_identifier))  // this is how the stack reports the connection attempt has been canceled
+            {
+                f.res = Connection::Error(bg_err_gatt_connection_timeout);
+            }
         }
 
         ASSERT(!(f.connection->flags & ConnectionFlags::Connecting));
 
         if (f.res)
         {
-            ASSERT(f.connection->flags & ConnectionFlags::Connected);
             CONDBG(f.connection, "CONNECTION SUCESS");
+            ASSERT(f.connection->flags & ConnectionFlags::Connected);
         }
         else
         {
-            ASSERT(!(f.connection->flags & ConnectionFlags::Connected));
             CONDBG(f.connection, "CONNECTION FAILED: %s", GetErrorMessage(f.res.error));
+            ASSERT(!(f.connection->flags & ConnectionFlags::Connected));
         }
 
         f.connection->EndProcedure();
@@ -947,12 +968,12 @@ async_def(ConnectionInfo* connection)
     f.connection = GetConnectionInfo(con);
     if (con.seq == f.connection->seq && GETBIT(connections, con.id))
     {
-        await(CloseConnectionImpl, f.connection, ConnectionFlags::Connected);
+        await(CloseConnectionImpl, f.connection);
     }
 }
 async_end
 
-async(Bluetooth::CloseConnectionImpl, ConnectionInfo* connection, ConnectionFlags activeFlag)
+async(Bluetooth::CloseConnectionImpl, ConnectionInfo* connection)
 async_def(unsigned retry)
 {
     await_acquire(connection->flags, ConnectionFlags::Procedure);
@@ -970,7 +991,7 @@ async_def(unsigned retry)
             CONDBG(connection, "Failed to close connection: %s", GetErrorMessage(rsp->result));
         }
 
-        if (!await_mask_ms(connection->flags, activeFlag, 0, 500))
+        if (!await_mask_ms(connection->flags, ConnectionFlags::Connected, 0, 500))
         {
             CONDBG(connection, "Connection did not close");
         }
@@ -980,10 +1001,10 @@ async_def(unsigned retry)
         }
     } while (f.retry--);
 
-    if (!!(connection->flags & activeFlag))
+    if (!!(connection->flags & ConnectionFlags::Connected))
     {
         CONDBG(connection, "FORCING connection closed");
-        connection->flags &= ~activeFlag;
+        connection->flags &= ~ConnectionFlags::Connected;
     }
 
     connection->EndProcedure();
@@ -1041,6 +1062,7 @@ async_end
 
 void Bluetooth::ConnectionInfo::EndProcedure()
 {
+    CONDBG((this - bluetooth.connectionInfo) + 1, "procedure complete");
     procedure.type = GattProcedure::Idle;
     procedure.ptr = NULL;
     flags &= ~(ConnectionFlags::Procedure | ConnectionFlags::ProcedureRunning);
@@ -1317,7 +1339,7 @@ async_def(
     f.connection = GetConnectionInfo(e.connection);
     f.connection->flags |= ConnectionFlags::DfuResetRequested;
     e.Success();
-    await(CloseConnectionImpl, f.connection, ConnectionFlags::Connected);
+    await(CloseConnectionImpl, f.connection);
 }
 async_end
 
