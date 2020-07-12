@@ -539,7 +539,15 @@ async_def()
                             evt.connection = OutgoingConnection(e.connection, ci.seq);
                             evt.characteristic = e.characteristic;
                             evt.offset = e.offset;
-                            RunCallback(handler->notification, evt, evt.data, e.value);
+                            if (handler->IsSynchronous())
+                            {
+                                evt.data = Span(e.value.data, e.value.len);
+                                handler->syncNotification(evt);
+                            }
+                            else
+                            {
+                                RunCallback(handler->notification, evt, evt.data, e.value);
+                            }
                         }
                         else
                         {
@@ -596,7 +604,15 @@ async_def()
                         evt.attribute = e.attribute;
                         evt.opcode = e.att_opcode;
                         evt.offset = e.offset;
-                        RunCallback(handler->valueChange, evt, evt.value, e.value);
+                        if (handler->IsSynchronous())
+                        {
+                            evt.value = Span(e.value.data, e.value.len);
+                            handler->syncValueChange(evt);
+                        }
+                        else
+                        {
+                            RunCallback(handler->valueChange, evt, evt.value, e.value);
+                        }
                     }
                     break;
                 }
@@ -614,7 +630,14 @@ async_def()
                         evt.characteristic = e.characteristic;
                         evt.opcode = e.att_opcode;
                         evt.offset = e.offset;
-                        RunCallback(handler->read, evt);
+                        if (handler->IsSynchronous())
+                        {
+                            handler->syncRead(evt);
+                        }
+                        else
+                        {
+                            RunCallback(handler->read, evt);
+                        }
                     }
                     else
                     {
@@ -637,7 +660,15 @@ async_def()
                         evt.characteristic = e.characteristic;
                         evt.opcode = e.att_opcode;
                         evt.offset = e.offset;
-                        RunCallback(handler->write, evt, evt.data, e.value);
+                        if (handler->IsSynchronous())
+                        {
+                            evt.data = Span(e.value.data, e.value.len);
+                            handler->syncWrite(evt);
+                        }
+                        else
+                        {
+                            RunCallback(handler->write, evt, evt.data, e.value);
+                        }
                     }
                     else
                     {
@@ -661,7 +692,14 @@ async_def()
                             evt.connection = IncomingConnection(e.connection, GetConnectionInfo(e.connection)->seq);
                             evt.characteristic = e.characteristic;
                             evt.level = (EventLevel)e.client_config_flags;
-                            RunCallback(handler->eventRequest, evt);
+                            if (handler->IsSynchronous())
+                            {
+                                handler->syncEventRequest(evt);
+                            }
+                            else
+                            {
+                                RunCallback(handler->eventRequest, evt);
+                            }
                         }
                     }
                     break;
@@ -866,7 +904,7 @@ Bluetooth::AttributeHandler* Bluetooth::FindHandler(LinkedList<AttributeHandler>
             continue;
         if (ah.attribute > attribute)
             break;
-        if (ah.type == type)
+        if (AttributeHandlerType(int(ah.type) & int(AttributeHandlerType::_TypeMask)) == type)
             return &ah;
     }
     return NULL;

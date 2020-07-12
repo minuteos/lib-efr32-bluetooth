@@ -749,6 +749,15 @@ private:
         WriteRequest,
         EventRequest,
         Notification,
+
+        _Sync = 0x10,
+        SyncValueChange = _Sync | ValueChange,
+        SyncReadRequest = _Sync | ReadRequest,
+        SyncWriteRequest = _Sync | WriteRequest,
+        SyncEventRequest = _Sync | EventRequest,
+        SyncNotification = _Sync | Notification,
+
+        _TypeMask = 0xF,
     };
 
     struct AttributeHandler
@@ -764,8 +773,22 @@ private:
         constexpr AttributeHandler(Attribute attribute, AsyncDelegate<CharacteristicNotification&> delegate)
             : attribute(attribute), type(AttributeHandlerType::Notification), notification(delegate) {}
 
+        constexpr AttributeHandler(Attribute attribute, Delegate<void, AttributeValueChanged&> delegate)
+            : attribute(attribute), type(AttributeHandlerType::SyncValueChange), syncValueChange(delegate) {}
+        constexpr AttributeHandler(Attribute attribute, Delegate<void, CharacteristicReadRequest&> delegate)
+            : attribute(attribute), type(AttributeHandlerType::SyncReadRequest), syncRead(delegate) {}
+        constexpr AttributeHandler(Attribute attribute, Delegate<void, CharacteristicWriteRequest&> delegate)
+            : attribute(attribute), type(AttributeHandlerType::SyncWriteRequest), syncWrite(delegate) {}
+        constexpr AttributeHandler(Attribute attribute, Delegate<void, CharacteristicEventRequest&> delegate)
+            : attribute(attribute), type(AttributeHandlerType::SyncEventRequest), syncEventRequest(delegate) {}
+        constexpr AttributeHandler(Attribute attribute, Delegate<void, CharacteristicNotification&> delegate)
+            : attribute(attribute), type(AttributeHandlerType::SyncNotification), syncNotification(delegate) {}
+
         Attribute attribute;
         AttributeHandlerType type;
+
+        constexpr bool IsSynchronous() const { return int(type) & int(AttributeHandlerType::_Sync); }
+
         union
         {
             AsyncDelegate<AttributeValueChanged&> valueChange;
@@ -773,6 +796,12 @@ private:
             AsyncDelegate<CharacteristicWriteRequest&> write;
             AsyncDelegate<CharacteristicEventRequest&> eventRequest;
             AsyncDelegate<CharacteristicNotification&> notification;
+
+            Delegate<void, AttributeValueChanged&> syncValueChange;
+            Delegate<void, CharacteristicReadRequest&> syncRead;
+            Delegate<void, CharacteristicWriteRequest&> syncWrite;
+            Delegate<void, CharacteristicEventRequest&> syncEventRequest;
+            Delegate<void, CharacteristicNotification&> syncNotification;
         };
     };
 
