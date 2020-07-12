@@ -536,7 +536,7 @@ async_def()
                         if (auto handler = FindHandler(ci.handlers, e.characteristic, AttributeHandlerType::Notification))
                         {
                             CharacteristicNotification evt;
-                            evt.connection = e.connection;
+                            evt.connection = OutgoingConnection(e.connection, ci.seq);
                             evt.characteristic = e.characteristic;
                             evt.offset = e.offset;
                             RunCallback(handler->notification, evt, evt.data, e.value);
@@ -592,7 +592,7 @@ async_def()
                     if (auto handler = FindHandler(handlers, e.attribute, AttributeHandlerType::ValueChange))
                     {
                         AttributeValueChanged evt;
-                        evt.connection = e.connection;
+                        evt.connection = IncomingConnection(e.connection, GetConnectionInfo(e.connection)->seq);
                         evt.attribute = e.attribute;
                         evt.opcode = e.att_opcode;
                         evt.offset = e.offset;
@@ -610,7 +610,7 @@ async_def()
                     if (auto handler = FindHandler(handlers, e.characteristic, AttributeHandlerType::ReadRequest))
                     {
                         CharacteristicReadRequest evt;
-                        evt.connection = e.connection;
+                        evt.connection = IncomingConnection(e.connection, GetConnectionInfo(e.connection)->seq);
                         evt.characteristic = e.characteristic;
                         evt.opcode = e.att_opcode;
                         evt.offset = e.offset;
@@ -633,7 +633,7 @@ async_def()
                     if (auto handler = FindHandler(handlers, e.characteristic, AttributeHandlerType::WriteRequest))
                     {
                         CharacteristicWriteRequest evt;
-                        evt.connection = e.connection;
+                        evt.connection = IncomingConnection(e.connection, GetConnectionInfo(e.connection)->seq);
                         evt.characteristic = e.characteristic;
                         evt.opcode = e.att_opcode;
                         evt.offset = e.offset;
@@ -658,7 +658,7 @@ async_def()
                         if (auto handler = FindHandler(handlers, e.characteristic, AttributeHandlerType::EventRequest))
                         {
                             CharacteristicEventRequest evt;
-                            evt.connection = e.connection;
+                            evt.connection = IncomingConnection(e.connection, GetConnectionInfo(e.connection)->seq);
                             evt.characteristic = e.characteristic;
                             evt.level = (EventLevel)e.client_config_flags;
                             RunCallback(handler->eventRequest, evt);
