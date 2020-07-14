@@ -223,6 +223,9 @@ public:
 
         constexpr operator uint16_t() const { return isError ? 0 : id; }
 
+        constexpr bool operator ==(const Connection& other) const { return raw == other.raw; }
+        constexpr bool operator !=(const Connection& other) const { return raw != other.raw; }
+
         async(Close);
 
         friend class Bluetooth;
@@ -368,6 +371,18 @@ public:
     size_t ConnectionMaxWrite(Connection connection) const { return ConnectionMTU(connection) - 5; }
     //! Gets the maximum allowed write without response payload size for the specified connection
     size_t ConnectionMaxWriteNoResponse(Connection connection) const { return ConnectionMTU(connection) - 3; }
+    //! Gets the IncomingConnection from an index, if it is incoming
+    IncomingConnection GetIncomingConnection(Connection connection) const
+    {
+        auto con = GetConnectionInfo(connection);
+        return con->IsIncoming() ? IncomingConnection(connection, con->seq) : IncomingConnection();
+    }
+    //! Gets the OutgoingConnection from an index, if it is outgoing
+    OutgoingConnection GetOutgoingConnection(Connection connection) const
+    {
+        auto con = GetConnectionInfo(connection);
+        return con->IsOutgoing() ? OutgoingConnection(connection, con->seq) : OutgoingConnection();
+    }
 
     //! Gets the total number of I/O buffers used by the Bluetooth stack
     int BuffersTotal() const { return ioBuffers; }
@@ -903,6 +918,9 @@ private:
         AddressType addressType;
 
         void EndProcedure();
+
+        bool IsIncoming() const { return !(flags & ConnectionFlags::Master); }
+        bool IsOutgoing() const { return !!(flags & ConnectionFlags::Master); }
     } connectionInfo[BLUETOOTH_MAX_CONNECTIONS] = {};	// connection numbers are one-based
 
     ALWAYS_INLINE uint8_t GetConnectionIndex(const ConnectionInfo* con) const
