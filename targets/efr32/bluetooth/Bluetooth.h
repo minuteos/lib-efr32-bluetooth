@@ -17,6 +17,10 @@
 #include <base/Span.h>
 #include <base/UuidLE.h>
 
+#if Cstorage
+#include <storage/ByteStorage.h>
+#endif
+
 #ifndef BLUETOOTH_MAX_CONNECTIONS
 #define BLUETOOTH_MAX_CONNECTIONS	4
 #endif
@@ -680,6 +684,10 @@ public:
     //! Registers standard handler for the Gecko OTA Control characteristic
     void RegisterGeckoOTAControlHandler(Characteristic characteristic)
         { RegisterHandler(characteristic, this, &Bluetooth::GeckoOTAControlWriteHandler); }
+#if Cstorage
+    //! Registers standard handler for the Gecko OTA Control characteristic, with direct write support
+    void RegisterGeckoOTAStorageHandler(Characteristic charCtl, Characteristic charData, storage::ByteStorage& storage);
+#endif
     //! Registers standard handler for the Gecko OTA Version characteristic
     void RegisterGeckoOTAVersionHandler(Characteristic characteristic)
         { RegisterHandler(characteristic, this, &Bluetooth::GeckoOTAVersionReadHandler); }
@@ -851,6 +859,7 @@ private:
         Procedure = BIT(3),
         ProcedureRunning = BIT(4),
 #ifdef gattdb_ota_control
+        UpgradeResetRequested = BIT(6),
         DfuResetRequested = BIT(7),
 #endif
     };
@@ -981,6 +990,10 @@ private:
     async(CloseConnectionImpl, ConnectionInfo* connection);
 
     async(GeckoOTAControlWriteHandler, CharacteristicWriteRequest& e);
+#if Cstorage && Cboot
+    static async(GeckoOTAControlStorageWriteHandler, storage::ByteStorage& storage, CharacteristicWriteRequest& e);
+    static async(GeckoOTADataStorageHandler, storage::ByteStorage& storage, CharacteristicWriteRequest& e);
+#endif
     async(GeckoOTAVersionReadHandler, CharacteristicReadRequest& e);
     async(SystemIDReadHandler, CharacteristicReadRequest& e);
 

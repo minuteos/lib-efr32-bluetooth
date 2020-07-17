@@ -10,6 +10,7 @@
 
 #include <application_properties.h>
 #include <rail.h>
+#include <btl_interface.h>
 
 //#define BLUETOOTH_TRACE   1
 
@@ -337,13 +338,23 @@ async_def()
 
                     auto& ci = *GetConnectionInfo(e.connection);
 #ifdef gattdb_ota_control
-                    if (!!(ci.flags & ConnectionFlags::DfuResetRequested))
+                    if (!!(ci.flags & (ConnectionFlags::DfuResetRequested | ConnectionFlags::UpgradeResetRequested)))
                     {
-                        CONDBG(&ci, "...DFU reset");
+                        CONDBG(&ci, "...%s reset", !!(ci.flags & ConnectionFlags::UpgradeResetRequested) ? "UPGRADE" : "DFU");
                         for (auto& handler: beforeReset)
                         {
                             handler();
                         }
+#if Cstorage
+                        if (!!(ci.flags & ConnectionFlags::UpgradeResetRequested))
+                        {
+                            BootloaderResetCause_t* resetCause = (BootloaderResetCause_t*) (RAM_MEM_BASE);
+                            resetCause->reason = BOOTLOADER_RESET_REASON_BOOTLOAD;
+                            resetCause->signature = BOOTLOADER_RESET_SIGNATURE_VALID;
+                            ASSERT(RMU->RSTCAUSE == 0);
+                            NVIC_SystemReset();
+                        }
+#endif
                         gecko_cmd_system_reset(2);
                     }
 #endif
@@ -1383,6 +1394,79 @@ async_def(
     await(CloseConnectionImpl, f.connection);
 }
 async_end
+
+#if Cstorage
+
+void Bluetooth::RegisterGeckoOTAStorageHandler(Characteristic charCtl, Characteristic charData, storage::ByteStorage& storage)
+{
+    struct Handlers
+    {
+        Handlers(storage::ByteStorage& storage)
+            : storage(storage) {}
+
+        async(Control, CharacteristicWriteRequest& e)
+        async_def()
+        {
+            if (e.data.Length() > 0)
+            {
+                switch (e.data[0])
+                {
+                    case 0:
+                        bluetooth.SetConnectionParameters(e.connection, 7.5, 7.5, 2, 3000);
+                        // prepare slot (erase first block)
+                        eraseUpTo = await(storage.EraseFirst, 0, 1);
+                        offset = 0;
+                        e.Success();
+                        async_return(true);
+
+                    case 3:
+                        // OTA complete
+                        MYDBG("OTA complete");
+                        offset = ~0u;
+                        bluetooth.GetConnectionInfo(e.connection)->flags |= ConnectionFlags::UpgradeResetRequested;
+                        e.Success();
+                        async_return(true);
+                }
+            }
+
+            e.Respond(AttError::RequestNotSupported);
+        }
+        async_end
+
+        async(Data, CharacteristicWriteRequest& e)
+        async_def()
+        {
+            if (offset != ~0u)
+            {
+                MYDBG("OTA data recieved: %X+%d=%X", offset, e.data.Length(), offset + e.data.Length());
+                await(storage.Write, offset, e.data);
+                offset += e.data.Length();
+                if (offset + 256 > eraseUpTo)
+                {
+                    // erase one more sector
+                    eraseUpTo = await(storage.EraseFirst, eraseUpTo, 1);
+                }
+                e.Success();
+            }
+            else
+            {
+                e.Respond(AttError::UnlikelyError);
+            }
+        }
+        async_end
+
+    private:
+        storage::ByteStorage& storage;
+        uint32_t offset = ~0u;
+        uint32_t eraseUpTo;
+    };
+
+    auto handlers = new(malloc_once(sizeof(Handlers))) Handlers(storage);
+    RegisterHandler(charCtl, handlers, &Handlers::Control);
+    RegisterHandler(charData, handlers, &Handlers::Data);
+}
+
+#endif
 
 extern "C" const ApplicationProperties_t applicationProperties;
 
