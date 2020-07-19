@@ -6,7 +6,7 @@
 # efr32-apploader/boot/Include.mk
 #
 
-ifeq (bootloader,$(NAME))
+ifdef BOOTLOADER_BUILD
 
 DEFINES += GECKO_BOOTLOADER_STORAGE_RESERVE=0xC000
 
