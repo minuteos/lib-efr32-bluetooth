@@ -336,6 +336,24 @@ public:
         uint16_t offset;
     };
 
+    struct ConnectionClosedEvent
+    {
+        Connection connection;
+        errorcode_t reason;
+    };
+
+    struct IncomingConnectionClosed
+    {
+        IncomingConnection connection;
+        errorcode_t reason;
+    };
+
+    struct OutgoingConnectionClosed
+    {
+        OutgoingConnection connection;
+        errorcode_t reason;
+    };
+
     struct Advertisement
     {
         uint8_t packetType;
@@ -681,6 +699,13 @@ public:
     template<typename TTarget, typename THandler> void RegisterHandler(Attribute attribute, TTarget&& target, THandler&& handler)
         { RegisterHandler(attribute, GetDelegate(std::forward<TTarget>(target), std::forward<THandler>(handler))); }
 
+    //! Registers a general handler (e.g. connection)
+    template<typename T> void RegisterHandler(T&& handler)
+        { RegisterHandler(handlers, AttributeHandler(std::forward<T>(handler))); }
+    //! Registers a general handler (e.g. connection)
+    template<typename TTarget, typename THandler> void RegisterHandler(TTarget&& target, THandler&& handler)
+        { RegisterHandler(GetDelegate(std::forward<TTarget>(target), std::forward<THandler>(handler))); }
+
     //! Registers standard handler for the Gecko OTA Control characteristic
     void RegisterGeckoOTAControlHandler(Characteristic characteristic)
         { RegisterHandler(characteristic, this, &Bluetooth::GeckoOTAControlWriteHandler); }
@@ -772,6 +797,8 @@ private:
         WriteRequest,
         EventRequest,
         Notification,
+        IncomingConnectionClosed,
+        OutgoingConnectionClosed,
 
         _Sync = 0x10,
         SyncValueChange = _Sync | ValueChange,
@@ -779,6 +806,8 @@ private:
         SyncWriteRequest = _Sync | WriteRequest,
         SyncEventRequest = _Sync | EventRequest,
         SyncNotification = _Sync | Notification,
+        SyncIncomingConnectionClosed = _Sync | IncomingConnectionClosed,
+        SyncOutgoingConnectionClosed = _Sync | OutgoingConnectionClosed,
 
         _TypeMask = 0xF,
     };
@@ -807,6 +836,11 @@ private:
         constexpr AttributeHandler(Attribute attribute, Delegate<void, CharacteristicNotification&> delegate)
             : attribute(attribute), type(AttributeHandlerType::SyncNotification), syncNotification(delegate) {}
 
+        constexpr AttributeHandler(Delegate<void, IncomingConnectionClosed&> delegate)
+            : attribute(), type(AttributeHandlerType::SyncIncomingConnectionClosed), syncIncomingConnectionClosed(delegate) {}
+        constexpr AttributeHandler(Delegate<void, OutgoingConnectionClosed&> delegate)
+            : attribute(), type(AttributeHandlerType::SyncOutgoingConnectionClosed), syncOutgoingConnectionClosed(delegate) {}
+
         Attribute attribute;
         AttributeHandlerType type;
 
@@ -825,6 +859,9 @@ private:
             Delegate<void, CharacteristicWriteRequest&> syncWrite;
             Delegate<void, CharacteristicEventRequest&> syncEventRequest;
             Delegate<void, CharacteristicNotification&> syncNotification;
+            Delegate<void, IncomingConnectionClosed&> syncIncomingConnectionClosed;
+            Delegate<void, OutgoingConnectionClosed&> syncOutgoingConnectionClosed;
+            Delegate<void, ConnectionClosedEvent&> syncConnectionClosed;
         };
     };
 

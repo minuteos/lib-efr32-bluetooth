@@ -383,6 +383,16 @@ async_def()
                         CONDBG(&ci, "Connection closed: %s", GetErrorMessage(e.reason));
                     }
                     ci.flags &= ~(ConnectionFlags::Connecting | ConnectionFlags::Connected);
+
+                    auto he = FindHandlers(ci, Attribute(), ci.IsIncoming() ? AttributeHandlerType::IncomingConnectionClosed : AttributeHandlerType::OutgoingConnectionClosed);
+                    while (auto h = he.Next())
+                    {
+                        ConnectionClosedEvent evt;
+                        evt.connection = Connection(e.connection, ci.seq);
+                        evt.reason = (errorcode_t)e.reason;
+                        h->syncConnectionClosed(evt);
+                    }
+
                     ci.handlers.Clear();
                     break;
                 }
