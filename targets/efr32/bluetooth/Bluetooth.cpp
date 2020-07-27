@@ -544,21 +544,25 @@ async_def()
                     auto& ci = *GetConnectionInfo(e.connection);
                     if (e.att_opcode == gatt_handle_value_notification)
                     {
-                        if (auto handler = FindHandler(ci.handlers, e.characteristic, AttributeHandlerType::Notification))
+                        auto he = FindHandlers(ci, e.characteristic, AttributeHandlerType::Notification);
+                        if (auto h = he.Next())
                         {
-                            CharacteristicNotification evt;
-                            evt.connection = OutgoingConnection(e.connection, ci.seq);
-                            evt.characteristic = e.characteristic;
-                            evt.offset = e.offset;
-                            if (handler->IsSynchronous())
+                            do
                             {
-                                evt.data = Span(e.value.data, e.value.len);
-                                handler->syncNotification(evt);
-                            }
-                            else
-                            {
-                                RunCallback(handler->notification, evt, evt.data, e.value);
-                            }
+                                CharacteristicNotification evt;
+                                evt.connection = OutgoingConnection(e.connection, ci.seq);
+                                evt.characteristic = e.characteristic;
+                                evt.offset = e.offset;
+                                if (h->IsSynchronous())
+                                {
+                                    evt.data = Span(e.value.data, e.value.len);
+                                    h->syncNotification(evt);
+                                }
+                                else
+                                {
+                                    RunCallback(h->notification, evt, evt.data, e.value);
+                                }
+                            } while ((h = he.Next()));
                         }
                         else
                         {
@@ -608,21 +612,23 @@ async_def()
                     CONDBG(e.connection, "evt_gatt_server_attribute_value: %04X, op %d, offset %d, data %H",
                         e.attribute, e.att_opcode, e.offset, Span(e.value.data, e.value.len));
 
-                    if (auto handler = FindHandler(handlers, e.attribute, AttributeHandlerType::ValueChange))
+                    auto& ci = *GetConnectionInfo(e.connection);
+                    auto he = FindHandlers(ci, e.attribute, AttributeHandlerType::ValueChange);
+                    while (auto h = he.Next())
                     {
                         AttributeValueChanged evt;
-                        evt.connection = IncomingConnection(e.connection, GetConnectionInfo(e.connection)->seq);
+                        evt.connection = IncomingConnection(e.connection, ci.seq);
                         evt.attribute = e.attribute;
                         evt.opcode = e.att_opcode;
                         evt.offset = e.offset;
-                        if (handler->IsSynchronous())
+                        if (h->IsSynchronous())
                         {
                             evt.value = Span(e.value.data, e.value.len);
-                            handler->syncValueChange(evt);
+                            h->syncValueChange(evt);
                         }
                         else
                         {
-                            RunCallback(handler->valueChange, evt, evt.value, e.value);
+                            RunCallback(h->valueChange, evt, evt.value, e.value);
                         }
                     }
                     break;
@@ -634,21 +640,26 @@ async_def()
                     CONDBG(e.connection, "evt_gatt_server_user_read_request: %04X, op %d, offset %d",
                         e.characteristic, e.att_opcode, e.offset);
 
-                    if (auto handler = FindHandler(handlers, e.characteristic, AttributeHandlerType::ReadRequest))
+                    auto& ci = *GetConnectionInfo(e.connection);
+                    auto he = FindHandlers(ci, e.characteristic, AttributeHandlerType::ReadRequest);
+                    if (auto h = he.Next())
                     {
-                        CharacteristicReadRequest evt;
-                        evt.connection = IncomingConnection(e.connection, GetConnectionInfo(e.connection)->seq);
-                        evt.characteristic = e.characteristic;
-                        evt.opcode = e.att_opcode;
-                        evt.offset = e.offset;
-                        if (handler->IsSynchronous())
+                        do
                         {
-                            handler->syncRead(evt);
-                        }
-                        else
-                        {
-                            RunCallback(handler->read, evt);
-                        }
+                            CharacteristicReadRequest evt;
+                            evt.connection = IncomingConnection(e.connection, ci.seq);
+                            evt.characteristic = e.characteristic;
+                            evt.opcode = e.att_opcode;
+                            evt.offset = e.offset;
+                            if (h->IsSynchronous())
+                            {
+                                h->syncRead(evt);
+                            }
+                            else
+                            {
+                                RunCallback(h->read, evt);
+                            }
+                        } while ((h = he.Next()));
                     }
                     else
                     {
@@ -664,22 +675,27 @@ async_def()
                     CONDBG(e.connection, "evt_gatt_server_user_write_request: %04X, op %d, offset %d, data %H",
                         e.characteristic, e.att_opcode, e.offset, Span(e.value.data, e.value.len));
 
-                    if (auto handler = FindHandler(handlers, e.characteristic, AttributeHandlerType::WriteRequest))
+                    auto& ci = *GetConnectionInfo(e.connection);
+                    auto he = FindHandlers(ci, e.characteristic, AttributeHandlerType::WriteRequest);
+                    if (auto h = he.Next())
                     {
-                        CharacteristicWriteRequest evt;
-                        evt.connection = IncomingConnection(e.connection, GetConnectionInfo(e.connection)->seq);
-                        evt.characteristic = e.characteristic;
-                        evt.opcode = e.att_opcode;
-                        evt.offset = e.offset;
-                        if (handler->IsSynchronous())
+                        do
                         {
-                            evt.data = Span(e.value.data, e.value.len);
-                            handler->syncWrite(evt);
-                        }
-                        else
-                        {
-                            RunCallback(handler->write, evt, evt.data, e.value);
-                        }
+                            CharacteristicWriteRequest evt;
+                            evt.connection = IncomingConnection(e.connection, ci.seq);
+                            evt.characteristic = e.characteristic;
+                            evt.opcode = e.att_opcode;
+                            evt.offset = e.offset;
+                            if (h->IsSynchronous())
+                            {
+                                evt.data = Span(e.value.data, e.value.len);
+                                h->syncWrite(evt);
+                            }
+                            else
+                            {
+                                RunCallback(h->write, evt, evt.data, e.value);
+                            }
+                        } while ((h = he.Next()));
                     }
                     else
                     {
@@ -697,19 +713,21 @@ async_def()
 
                     if (e.status_flags & gatt_server_client_config)
                     {
-                        if (auto handler = FindHandler(handlers, e.characteristic, AttributeHandlerType::EventRequest))
+                        auto& ci = *GetConnectionInfo(e.connection);
+                        auto he = FindHandlers(ci, e.characteristic, AttributeHandlerType::EventRequest);
+                        while (auto h = he.Next())
                         {
                             CharacteristicEventRequest evt;
-                            evt.connection = IncomingConnection(e.connection, GetConnectionInfo(e.connection)->seq);
+                            evt.connection = IncomingConnection(e.connection, ci.seq);
                             evt.characteristic = e.characteristic;
                             evt.level = (EventLevel)e.client_config_flags;
-                            if (handler->IsSynchronous())
+                            if (h->IsSynchronous())
                             {
-                                handler->syncEventRequest(evt);
+                                h->syncEventRequest(evt);
                             }
                             else
                             {
-                                RunCallback(handler->eventRequest, evt);
+                                RunCallback(h->eventRequest, evt);
                             }
                         }
                     }
@@ -907,18 +925,33 @@ void Bluetooth::RegisterHandler(LinkedList<AttributeHandler>& handlers, Attribut
     manipulator.Insert(handler);
 }
 
-Bluetooth::AttributeHandler* Bluetooth::FindHandler(LinkedList<AttributeHandler> handlers, Attribute attribute, AttributeHandlerType type)
+Bluetooth::AttributeHandler* Bluetooth::HandlerEnumerator::Next()
 {
-    for (auto& ah: handlers)
+    for (;;)
     {
-        if (ah.attribute < attribute)
-            continue;
-        if (ah.attribute > attribute)
-            break;
-        if (AttributeHandlerType(int(ah.type) & int(AttributeHandlerType::_TypeMask)) == type)
-            return &ah;
+        while (auto h = iter.Read())
+        {
+            if (h->attribute < Attribute())
+            {
+                continue;
+            }
+            if (h->attribute == Attribute() &&
+                AttributeHandlerType(int(h->type) & int(AttributeHandlerType::_TypeMask)) == Type())
+            {
+                return h;
+            }
+        }
+
+        if (global.IsValid())
+        {
+            iter = global;
+            global = LinkedList<AttributeHandler>::Iterator();
+        }
+        else
+        {
+            return NULL;
+        }
     }
-    return NULL;
 }
 
 static void Decrement(uint32_t* ptr, intptr_t result)

@@ -965,7 +965,26 @@ private:
     }
 
     static void RegisterHandler(LinkedList<AttributeHandler>& handlers, AttributeHandler handler);
-    static AttributeHandler* FindHandler(LinkedList<AttributeHandler> handlers, Attribute attribute, AttributeHandlerType type);
+
+    struct HandlerEnumerator
+    {
+        constexpr HandlerEnumerator(LinkedList<AttributeHandler> handlers, LinkedList<AttributeHandler> globalHandlers, Attribute attribute, AttributeHandlerType type)
+            : iter(handlers.begin()), global(globalHandlers.begin()), attributeAndType(uint32_t(attribute) | (uint32_t(type) << 16))
+        {
+        }
+
+        AttributeHandler* Next();
+
+    private:
+        LinkedList<AttributeHandler>::Iterator iter, global;
+        uint32_t attributeAndType;
+
+        constexpr class Attribute Attribute() const { return (uint16_t)attributeAndType; }
+        constexpr AttributeHandlerType Type() const { return AttributeHandlerType(attributeAndType >> 16); }
+    };
+
+    constexpr HandlerEnumerator FindHandlers(ConnectionInfo& ci, Attribute attr, AttributeHandlerType type)
+        { return HandlerEnumerator(ci.handlers, handlers, attr, type); }
 
     async(Task);
     async(LLTask);
