@@ -221,6 +221,8 @@ public:
 
         constexpr static Connection Error(uint16_t error) { return Connection(error ? error | BIT(15) : 0); }
 
+        constexpr bool CheckSequence(uint8_t seq) const { return !((this->seq ^ seq) & 0x7F); }
+
     public:
         constexpr Connection(uint16_t rawValue = 0)
             : raw(rawValue) {}

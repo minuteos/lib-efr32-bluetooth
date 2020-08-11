@@ -1061,7 +1061,7 @@ async_def(ConnectionInfo* connection)
 {
     // cannot use GetConnectionInfo, we want to survive cases when the connection is already reused
     f.connection = GetConnectionInfo(con);
-    if (con.seq == f.connection->seq && GETBIT(connections, con.id))
+    if (con.CheckSequence(f.connection->seq) && GETBIT(connections, con.id))
     {
         await(CloseConnectionImpl, f.connection);
     }
@@ -1114,7 +1114,7 @@ errorcode_t Bluetooth::OutgoingConnection::GetLastError() const
         return (errorcode_t)error;
     }
     auto conn = bluetooth.GetConnectionInfo(*this);
-    if (seq != conn->seq)
+    if (!CheckSequence(conn->seq))
     {
         return bg_err_not_connected;
     }
@@ -1130,7 +1130,7 @@ async_def(
 )
 {
     f.connection = GetConnectionInfo(connection);
-    if (f.connection->seq != connection.seq)
+    if (!connection.CheckSequence(f.connection->seq))
     {
         // connection was already replaced
         CONDBG(f.connection, "connection instance mismatch, %d != %d", f.connection->seq, connection.seq);
@@ -1138,7 +1138,7 @@ async_def(
     }
 
     await_acquire(f.connection->flags, ConnectionFlags::Procedure);
-    if (f.connection->seq != connection.seq)
+    if (!connection.CheckSequence(f.connection->seq))
     {
         // connection was already replaced, we must not hold it
         CONDBG(f.connection, "connection instance mismatch, %d != %d", f.connection->seq, connection.seq);
@@ -1186,7 +1186,7 @@ async_def(
             await_mask(f.connection->flags, ConnectionFlags::ProcedureRunning, 0);
         }
 
-        if (f.connection->seq == connection.seq)
+        if (connection.CheckSequence(f.connection->seq))
         {
             f.connection->EndProcedure();
             async_return(f.connection->error ? 0 : f.res.handle);
@@ -1220,7 +1220,7 @@ async_def(
             await_mask(f.connection->flags, ConnectionFlags::ProcedureRunning, 0);
         }
 
-        if (f.connection->seq == connection.seq)
+        if (connection.CheckSequence(f.connection->seq))
         {
             f.connection->EndProcedure();
             async_return(f.connection->error ? 0 : f.res.raw);
@@ -1252,7 +1252,7 @@ async_def(
             await_mask(f.connection->flags, ConnectionFlags::ProcedureRunning, 0);
         }
 
-        if (f.connection->seq == connection.seq)
+        if (connection.CheckSequence(f.connection->seq))
         {
             f.connection->EndProcedure();
             async_return(!f.connection->error);
@@ -1288,7 +1288,7 @@ async_def(
             await_mask(f.connection->flags, ConnectionFlags::ProcedureRunning, 0);
         }
 
-        if (f.connection->seq == connection.seq)
+        if (connection.CheckSequence(f.connection->seq))
         {
             f.connection->EndProcedure();
             async_return(f.connection->error ? 0 : f.op.read);
@@ -1324,7 +1324,7 @@ async_def(
             await_mask(f.connection->flags, ConnectionFlags::ProcedureRunning, 0);
         }
 
-        if (f.connection->seq == connection.seq)
+        if (connection.CheckSequence(f.connection->seq))
         {
             f.connection->EndProcedure();
             async_return(f.connection->error ? 0 : f.op.written);
