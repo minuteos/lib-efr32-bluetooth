@@ -20,16 +20,16 @@ EFM32_SDK_RAIL = $(OBJDIR)efr32-rail/
 EFM32_BT_INCLUDE = $(EFM32_SDK_BT_STACK)inc/
 EFM32_RAIL_INCLUDE = $(EFM32_SDK_RAIL)
 
-# the libs are compiled with soft FP ABI
-CORTEX_FLOAT_ABI = softfp
-
 BGBUILD = $(EFM32_SDK_BT_BIN)bgbuild
 
 INCLUDE_DIRS += $(EFM32_BT_INCLUDE)common $(EFM32_BT_INCLUDE)soc $(EFM32_RAIL_INCLUDE)common $(EFM32_RAIL_INCLUDE)chip/efr32/$(EFM32_RAIL_CHIP)
 DEFINES += EFM32_BT_DEVICE=$(EFM32_BT_DEVICE)
 
 LIB_DIRS += $(EFM32_SDK_BT_DEV)GCC/
+
+ifndef BOOTLOADER_BUILD
 LIBS += bluetooth psstore rail mbedtls
+endif
 
 GATT_DB = $(firstword $(wildcard $(foreach d,$(SOURCE_DIRS),$(d)gatt.xml)))
 GATT_PREFIX = $(GATT_DB:.xml=)

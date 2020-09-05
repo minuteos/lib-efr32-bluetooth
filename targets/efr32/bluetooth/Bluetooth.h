@@ -30,7 +30,11 @@
 #endif
 
 #ifndef BLUETOOTH_ADDITIONAL_HEAP
+#if SRAM_SIZE > 32768
 #define BLUETOOTH_ADDITIONAL_HEAP	4096
+#else
+#define BLUETOOTH_ADDITIONAL_HEAP	1024
+#endif
 #endif
 
 // this command was briefly exposed in API v2.4 but is implemented in other versions as well

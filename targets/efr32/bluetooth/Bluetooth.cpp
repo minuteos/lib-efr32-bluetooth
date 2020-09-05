@@ -142,15 +142,19 @@ async_def()
 
     irq_init(); // configure IRQ priorities
 
+#ifdef _SILICON_LABS_32B_SERIES_1
     MSC->LOCK = MSC_LOCK_LOCKKEY_UNLOCK;
     MSC->CTRL &= ~MSC_CTRL_CLKDISFAULTEN;
     MSC->LOCK = MSC_LOCK_LOCKKEY_LOCK;
+#endif
 
     gecko_stack_init(&cfg);
 
+#ifdef _SILICON_LABS_32B_SERIES_1
     MSC->LOCK = MSC_LOCK_LOCKKEY_UNLOCK;
     MSC->CTRL |= MSC_CTRL_CLKDISFAULTEN;
     MSC->LOCK = MSC_LOCK_LOCKKEY_LOCK;
+#endif
 
     gecko_bgapi_class_system_init();
     gecko_bgapi_class_le_gap_init();

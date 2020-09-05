@@ -27,7 +27,7 @@ void sl_sleeptimer_init()
     // timer initialization is kernel's responsibility
     // however, libbluetooth 2.13+ uses PRORTC timer for some cases
     // and relies on it having an interrupt handler that just clears the flags
-    EFM32_SetIRQClearingHandler(PRORTC_IRQn, *(volatile uint32_t*)0x40044010);
+    EFM32_SetIRQClearingHandler(PRORTC_IRQn, EFM32_IFC(PRORTC));
 }
 
 void sl_sleeptimer_restart_timer()
