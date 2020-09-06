@@ -1468,7 +1468,8 @@ void Bluetooth::RegisterGeckoOTAStorageHandler(Characteristic charCtl, Character
 
                     case 3:
                         // OTA complete
-                        MYDBG("OTA complete");
+                        MYDBG("OTA complete, waiting for %d actions to complete", active);
+                        await_mask(active, ~0u, 0);
                         offset = ~0u;
                         bluetooth.GetConnectionInfo(e.connection)->flags |= ConnectionFlags::UpgradeResetRequested;
                         e.Success();
@@ -1481,17 +1482,33 @@ void Bluetooth::RegisterGeckoOTAStorageHandler(Characteristic charCtl, Character
         async_end
 
         async(Data, CharacteristicWriteRequest& e)
-        async_def()
+        async_def(
+            uint32_t offset;
+        )
         {
+            active++;
             if (offset != ~0u)
             {
-                MYDBG("OTA data recieved: %X+%d=%X", offset, e.data.Length(), offset + e.data.Length());
-                await(storage.Write, offset, e.data);
+                f.offset = offset;
                 offset += e.data.Length();
-                if (offset + 256 > eraseUpTo)
+                while (f.offset + e.data.Length() > eraseUpTo)
+                {
+                    // wait for erase to complete
+                    MYDBG("OTA waiting for erase");
+                    if (!await_mask_not_sec(eraseUpTo, ~0u, eraseUpTo, 1))
+                    {
+                        MYDBG("OTA could not wait until next page erased");
+                        e.Respond(AttError::UnlikelyError);
+                    }
+                }
+                MYDBG("OTA data recieved: %X+%d=%X", f.offset, e.data.Length(), offset);
+                await(storage.Write, f.offset, e.data);
+                if (f.offset + e.data.Length() + 256 > eraseUpTo && eraseUpTo < storage.Size())
                 {
                     // erase one more sector
+                    MYDBG("OTA erasing sector @ %X", eraseUpTo);
                     eraseUpTo = await(storage.EraseFirst, eraseUpTo, 1);
+                    MYDBG("OTA erased up to %X", eraseUpTo);
                 }
                 e.Success();
             }
@@ -1499,6 +1516,7 @@ void Bluetooth::RegisterGeckoOTAStorageHandler(Characteristic charCtl, Character
             {
                 e.Respond(AttError::UnlikelyError);
             }
+            active--;
         }
         async_end
 
@@ -1506,6 +1524,7 @@ void Bluetooth::RegisterGeckoOTAStorageHandler(Characteristic charCtl, Character
         storage::ByteStorage& storage;
         uint32_t offset = ~0u;
         uint32_t eraseUpTo;
+        uint32_t active = 0;
     };
 
     auto handlers = new(malloc_once(sizeof(Handlers))) Handlers(storage);
