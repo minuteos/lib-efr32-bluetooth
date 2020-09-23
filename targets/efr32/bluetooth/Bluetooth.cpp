@@ -149,6 +149,9 @@ async_def()
 #endif
 
     gecko_stack_init(&cfg);
+#ifdef Crailmp
+    gecko_init_multiprotocol(NULL);
+#endif
 
 #ifdef _SILICON_LABS_32B_SERIES_1
     MSC->LOCK = MSC_LOCK_LOCKKEY_UNLOCK;
