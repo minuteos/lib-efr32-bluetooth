@@ -238,6 +238,19 @@ public:
 
         async(Close);
 
+        //! Gets the current security level
+        Bluetooth::Security Security() const;
+        //! Gets the current MTU
+        size_t MTU() const;
+        //! Gets maximum allowed notification size
+        size_t MaxNotification() const;
+        //! Gets the maximum allowed read payload size
+        size_t MaxReadResponse() const;
+        //! Gets the maximum allowed write payload size
+        size_t MaxWrite() const;
+        //! Gets the maximum allowed write without response payload size
+        size_t MaxWriteNoResponse() const;
+
         friend class Bluetooth;
     };
 
@@ -1097,6 +1110,18 @@ ALWAYS_INLINE async(Bluetooth::IncomingConnection::SendNotification, Characteris
     { return async_forward(bluetooth.SendCharacteristicNotification, *this, characteristic, value); }
 ALWAYS_INLINE async(Bluetooth::Connection::Close)
     { return async_forward(bluetooth.CloseConnection, *this); }
+ALWAYS_INLINE Bluetooth::Security Bluetooth::Connection::Security() const
+    { return bluetooth.ConnectionSecurity(*this); }
+ALWAYS_INLINE size_t Bluetooth::Connection::MTU() const
+    { return bluetooth.ConnectionMTU(*this); }
+ALWAYS_INLINE size_t Bluetooth::Connection::MaxNotification() const
+    { return bluetooth.ConnectionMaxNotification(*this); }
+ALWAYS_INLINE size_t Bluetooth::Connection::MaxReadResponse() const
+    { return bluetooth.ConnectionMaxReadResponse(*this); }
+ALWAYS_INLINE size_t Bluetooth::Connection::MaxWrite() const
+    { return bluetooth.ConnectionMaxWrite(*this); }
+ALWAYS_INLINE size_t Bluetooth::Connection::MaxWriteNoResponse() const
+    { return bluetooth.ConnectionMaxWriteNoResponse(*this); }
 
 #if BLUETOOTH_MAX_ADVERTISERS > 1
 ALWAYS_INLINE uint8_t Bluetooth::AdvertisementSet::Index() const { return this - bluetooth.adv; }
