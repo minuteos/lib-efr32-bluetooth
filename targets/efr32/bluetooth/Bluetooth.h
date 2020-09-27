@@ -355,23 +355,23 @@ public:
         uint16_t offset;
     };
 
-    struct ConnectionClosedEvent
+    template<typename TConnection> struct ConnectionOpenedEvent
     {
-        Connection connection;
+        TConnection connection;
         errorcode_t reason;
     };
 
-    struct IncomingConnectionClosed
+    using IncomingConnectionOpened = ConnectionOpenedEvent<IncomingConnection>;
+    using OutgoingConnectionOpened = ConnectionOpenedEvent<OutgoingConnection>;
+
+    template<typename TConnection> struct ConnectionClosedEvent
     {
-        IncomingConnection connection;
+        TConnection connection;
         errorcode_t reason;
     };
 
-    struct OutgoingConnectionClosed
-    {
-        OutgoingConnection connection;
-        errorcode_t reason;
-    };
+    using IncomingConnectionClosed = ConnectionClosedEvent<IncomingConnection>;
+    using OutgoingConnectionClosed = ConnectionClosedEvent<OutgoingConnection>;
 
     struct Advertisement
     {
@@ -399,7 +399,7 @@ public:
     bool Initialized() const { return !!(flags & Flags::Initialized); }
 
     //! Gets a bit mask determining active connections
-    uint32_t Connections() const { return connections; }
+    const uint32_t& Connections() const { return connections; }
     //! Gets the current security level of the specified connection
     Security ConnectionSecurity(Connection connection) const { return GetConnectionInfo(connection)->security; }
     //! Gets the current MTU of the specified connection
@@ -816,6 +816,8 @@ private:
         WriteRequest,
         EventRequest,
         Notification,
+        IncomingConnectionOpened,
+        OutgoingConnectionOpened,
         IncomingConnectionClosed,
         OutgoingConnectionClosed,
 
@@ -825,6 +827,8 @@ private:
         SyncWriteRequest = _Sync | WriteRequest,
         SyncEventRequest = _Sync | EventRequest,
         SyncNotification = _Sync | Notification,
+        SyncIncomingConnectionOpened = _Sync | IncomingConnectionOpened,
+        SyncOutgoingConnectionOpened = _Sync | OutgoingConnectionOpened,
         SyncIncomingConnectionClosed = _Sync | IncomingConnectionClosed,
         SyncOutgoingConnectionClosed = _Sync | OutgoingConnectionClosed,
 
@@ -855,6 +859,10 @@ private:
         constexpr AttributeHandler(Attribute attribute, Delegate<void, CharacteristicNotification&> delegate)
             : attribute(attribute), type(AttributeHandlerType::SyncNotification), syncNotification(delegate) {}
 
+        constexpr AttributeHandler(Delegate<void, IncomingConnectionOpened&> delegate)
+            : attribute(), type(AttributeHandlerType::SyncIncomingConnectionOpened), syncIncomingConnectionOpened(delegate) {}
+        constexpr AttributeHandler(Delegate<void, OutgoingConnectionOpened&> delegate)
+            : attribute(), type(AttributeHandlerType::SyncOutgoingConnectionOpened), syncOutgoingConnectionOpened(delegate) {}
         constexpr AttributeHandler(Delegate<void, IncomingConnectionClosed&> delegate)
             : attribute(), type(AttributeHandlerType::SyncIncomingConnectionClosed), syncIncomingConnectionClosed(delegate) {}
         constexpr AttributeHandler(Delegate<void, OutgoingConnectionClosed&> delegate)
@@ -878,9 +886,12 @@ private:
             Delegate<void, CharacteristicWriteRequest&> syncWrite;
             Delegate<void, CharacteristicEventRequest&> syncEventRequest;
             Delegate<void, CharacteristicNotification&> syncNotification;
+            Delegate<void, IncomingConnectionOpened&> syncIncomingConnectionOpened;
+            Delegate<void, OutgoingConnectionOpened&> syncOutgoingConnectionOpened;
+            Delegate<void, ConnectionOpenedEvent<Connection>&> syncConnectionOpened;
             Delegate<void, IncomingConnectionClosed&> syncIncomingConnectionClosed;
             Delegate<void, OutgoingConnectionClosed&> syncOutgoingConnectionClosed;
-            Delegate<void, ConnectionClosedEvent&> syncConnectionClosed;
+            Delegate<void, ConnectionClosedEvent<Connection>&> syncConnectionClosed;
         };
     };
 

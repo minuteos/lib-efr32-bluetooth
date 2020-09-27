@@ -330,6 +330,14 @@ async_def()
 
                     // these arrive later
                     ci.interval = ci.latency = ci.timeout = ci.txsize = 0;
+
+                    auto he = FindHandlers(ci, Attribute(), ci.IsIncoming() ? AttributeHandlerType::IncomingConnectionOpened : AttributeHandlerType::OutgoingConnectionOpened);
+                    while (auto h = he.Next())
+                    {
+                        ConnectionOpenedEvent<Connection> evt;
+                        evt.connection = Connection(e.connection, ci.seq);
+                        h->syncConnectionOpened(evt);
+                    }
                     break;
                 }
 
@@ -394,7 +402,7 @@ async_def()
                     auto he = FindHandlers(ci, Attribute(), ci.IsIncoming() ? AttributeHandlerType::IncomingConnectionClosed : AttributeHandlerType::OutgoingConnectionClosed);
                     while (auto h = he.Next())
                     {
-                        ConnectionClosedEvent evt;
+                        ConnectionClosedEvent<Connection> evt;
                         evt.connection = Connection(e.connection, ci.seq);
                         evt.reason = (errorcode_t)e.reason;
                         h->syncConnectionClosed(evt);
