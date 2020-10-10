@@ -504,6 +504,8 @@ async_def()
                 case EVENT_ID(gecko_evt_le_gap_adv_timeout_id):
                 {
                     auto &e = evt->data.evt_le_gap_adv_timeout;
+                    MYTRACE("evt_le_gap_adv_timeout: %d",
+                        e.handle);
                     adv[e.handle].flags &= ~(AdvertisementSet::Flags::Active | AdvertisementSet::Flags::Requested);
                     break;
                 }
@@ -852,7 +854,10 @@ async_def()
 
         if (Initialized())
         {
-            await_signal_ticks(event, std::min((mono_t)MONO_SIGNED_MAX, gecko_can_sleep_ticks()));
+            if (auto timeout = std::min((mono_t)MONO_SIGNED_MAX, gecko_can_sleep_ticks()))
+            {
+                await_signal_ticks(event, timeout);
+            }
         }
         else
         {
