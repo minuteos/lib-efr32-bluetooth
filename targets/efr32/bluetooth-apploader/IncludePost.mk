@@ -12,11 +12,12 @@ ifneq (,$(GECKO_SIGN_KEY))
 GECKO_APPLOADER_SREC = $(OBJDIR)apploader.s37
 GECKO_APPLOADER_SIGNED_SREC = $(OBJDIR)apploader-signed.s37
 GECKO_APPLOADER_SIGNED = $(OBJDIR)apploader-signed.o
+GECKO_APPLOADER_START ?= 0
 
 ADDITIONAL_BLOBS += $(GECKO_APPLOADER_SIGNED)
 
 $(GECKO_APPLOADER_SREC): $(GECKO_APPLOADER)
-	$(OBJCOPY) -O srec --srec-forceS3 $< $@
+	$(OBJCOPY) -O srec --srec-forceS3 --change-section-address .binapploader=$(GECKO_APPLOADER_START) $< $@
 
 $(GECKO_APPLOADER_SIGNED_SREC): $(GECKO_APPLOADER_SREC)
 	$(SI_COMMANDER) convert $< --secureboot --keyfile $(GECKO_SIGN_KEY) -o $@

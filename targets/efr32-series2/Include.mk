@@ -7,3 +7,5 @@
 #
 
 TARGETS += efr32-no-nvm3
+
+GECKO_APPLOADER_START = 0x6000
