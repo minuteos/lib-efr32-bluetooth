@@ -1569,3 +1569,10 @@ async_def_sync()
         addr.addr[3], addr.addr[4], addr.addr[5]));
 }
 async_end
+
+async(Bluetooth::ApplicationProductReadHandler, CharacteristicReadRequest& e)
+async_def_sync()
+{
+    e.Success(applicationProperties.app.productId);
+}
+async_end

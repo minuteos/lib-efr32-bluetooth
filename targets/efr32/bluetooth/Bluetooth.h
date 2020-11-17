@@ -741,6 +741,9 @@ public:
     //! Registers standard handler for retrieving System ID
     void RegisterSystemIDHandler(Characteristic characteristic)
         { RegisterHandler(characteristic, this, &Bluetooth::SystemIDReadHandler); }
+    //! Registers standard handler for retrieving Application Product ID
+    void RegisterApplicationProductHandler(Characteristic characteristic)
+        { RegisterHandler(characteristic, this, &Bluetooth::ApplicationProductReadHandler); }
 
     /********** sm (Security Manager) **********/
 
@@ -1082,6 +1085,7 @@ private:
 #endif
     async(GeckoOTAVersionReadHandler, CharacteristicReadRequest& e);
     async(SystemIDReadHandler, CharacteristicReadRequest& e);
+    async(ApplicationProductReadHandler, CharacteristicReadRequest& e);
 
 #if Cnvram
     async(NVConfigEventHandler, CharacteristicEventRequest& e);
