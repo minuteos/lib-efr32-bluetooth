@@ -1347,7 +1347,10 @@ async_def(
         if (connection.CheckSequence(f.connection->seq))
         {
             f.connection->EndProcedure();
-            async_return(f.connection->error ? 0 : f.op.written);
+            if (!f.connection->error)
+            {
+                async_return(nonzero(value.Length()));
+            }
         }
     }
 
@@ -1377,7 +1380,7 @@ async_def()
         }
 
         conn->EndProcedure();
-        async_return(rsp->sent_len);
+        async_return(nonzero(rsp->sent_len));
     }
 
     async_return(0);
