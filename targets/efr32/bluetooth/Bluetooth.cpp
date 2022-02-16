@@ -1373,14 +1373,14 @@ async_def()
         if (rsp->result != bg_err_success)
         {
             CONDBG(conn, "...immediately failed: %s", GetErrorMessage(rsp->result));
+            conn->EndProcedure();
         }
         else
         {
             CONDBG(conn, "...sent %d", rsp->sent_len);
+            conn->EndProcedure();
+            async_return(nonzero(rsp->sent_len));
         }
-
-        conn->EndProcedure();
-        async_return(nonzero(rsp->sent_len));
     }
 
     async_return(0);
@@ -1402,14 +1402,14 @@ async_def()
         if (rsp->result != bg_err_success)
         {
             CONDBG(conn, "...immediately failed: %s", GetErrorMessage(rsp->result));
+            conn->EndProcedure();
         }
         else
         {
             CONDBG(conn, "...sent %d", rsp->sent_len);
+            conn->EndProcedure();
+            async_return(nonzero(rsp->sent_len));
         }
-
-        conn->EndProcedure();
-        async_return(rsp->sent_len);
     }
 
     async_return(0);
