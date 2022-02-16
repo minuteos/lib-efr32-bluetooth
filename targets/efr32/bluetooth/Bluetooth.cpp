@@ -798,6 +798,10 @@ async_def()
                     UNUSED auto &e = evt->data.evt_sm_confirm_passkey;
                     CONDBG(e.connection, "evt_sm_confirm_passkey: %06d",
                         e.passkey);
+                    if (!!(flags & Flags::PassAutoConfirm))
+                    {
+                        gecko_cmd_sm_passkey_confirm(e.connection, 1);
+                    }
                     break;
                 }
 

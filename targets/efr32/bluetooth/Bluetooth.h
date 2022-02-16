@@ -764,6 +764,14 @@ public:
         return ProcessResult(gecko_cmd_sm_set_passkey(key)->result);
     }
 
+    //! Sets passkey autoconfirmation
+    errorcode_t SetPasskeyAutoconfirm(bool state = true)
+    {
+        if (state) { flags |= Flags::PassAutoConfirm; }
+        else { flags &= ~Flags::PassAutoConfirm; }
+        return bg_err_success;
+    }
+
     //! Configures the bonding database
     errorcode_t SetBondingConfiguration(uint32_t maxBondings, bool newReplaceOld)
     {
@@ -806,6 +814,7 @@ private:
         Connecting = BIT(2),                //< An outgoing connection is currently pending
         ScanningRequested = BIT(3),         //< Scanning for advertisements is requested
         ScanningActive = BIT(4),            //< Scanning for advertisements is currently active
+        PassAutoConfirm = BIT(5),           //< Automatic confirmation when using DisplayYesNo security
 
         ScanningRequestedAndActive = ScanningRequested | ScanningActive,
     };
