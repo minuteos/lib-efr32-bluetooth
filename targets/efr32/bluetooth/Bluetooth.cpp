@@ -12,17 +12,28 @@
 #include <rail.h>
 #include <btl_interface.h>
 
-//#define BLUETOOTH_TRACE   1
+#define TRACE_ADV       1
+#define TRACE_XFER      2
+#define TRACE_PROCEDURE 4
+#define TRACE_EVENTS    8
+
+#define TRACE_READ      0x10
+#define TRACE_WRITE     0x20
+#define TRACE_NOTIFY    0x40
+
+//#define BLUETOOTH_TRACE   TRACE_ADV
 
 #define MYDBG(...)  DBGCL("bluetooth", __VA_ARGS__)
+#define CONDBG(con, fmt, ...)    DBGCL("bluetooth", "[%d] " fmt, GetConnectionIndex(con), ## __VA_ARGS__)
 
 #if BLUETOOTH_TRACE
-#define MYTRACE(...) MYDBG(__VA_ARGS__)
+#define MYTRACE(mask, ...) if ((BLUETOOTH_TRACE) & (mask)) { MYDBG(__VA_ARGS__); }
+#define CONTRACE(mask, ...) if ((BLUETOOTH_TRACE) & (mask)) { CONDBG(__VA_ARGS__); }
 #else
 #define MYTRACE(...)
+#define CONTRACE(...)
 #endif
 
-#define CONDBG(con, fmt, ...)    DBGCL("bluetooth", "[%d] " fmt, GetConnectionIndex(con), ## __VA_ARGS__)
 
 Bluetooth bluetooth;
 
@@ -130,7 +141,7 @@ void Bluetooth::AdvertisementSet::StartImpl()
         ProcessResult(gecko_cmd_le_gap_set_advertise_timing(Index(), min, max, timeout, count)->result);
         ProcessResult(gecko_cmd_le_gap_set_advertise_channel_map(Index(), channels)->result);
     }
-    MYTRACE("le_gap_start_advertising(%d, %d, %d)", Index(), discover, connect);
+    MYTRACE(TRACE_ADV, "le_gap_start_advertising(%d, %d, %d)", Index(), discover, connect);
     ProcessResult(gecko_cmd_le_gap_start_advertising(Index(), discover, connect)->result);
     flags = (flags & ~Flags::Update) | Flags::Active;
 }
@@ -504,7 +515,7 @@ async_def()
                 case EVENT_ID(gecko_evt_le_gap_adv_timeout_id):
                 {
                     auto &e = evt->data.evt_le_gap_adv_timeout;
-                    MYTRACE("evt_le_gap_adv_timeout: %d",
+                    MYTRACE(TRACE_ADV | TRACE_EVENTS, "evt_le_gap_adv_timeout: %d",
                         e.handle);
                     adv[e.handle].flags &= ~(AdvertisementSet::Flags::Active | AdvertisementSet::Flags::Requested);
                     break;
@@ -598,13 +609,13 @@ async_def()
                     }
                     else if (ci.procedure.type == GattProcedure::ReadCharacteristic && ci.procedure.read)
                     {
-                        CONDBG(&ci, "Read characteristic %04X + %d via op %d: %H", e.characteristic, e.offset, e.att_opcode, Span(e.value.data, e.value.len));
+                        CONTRACE(TRACE_XFER, &ci, "Read characteristic %04X + %d via op %d: %H", e.characteristic, e.offset, e.att_opcode, Span(e.value.data, e.value.len));
                         Span(e.value.data, e.value.len).CopyTo(ci.procedure.read->buffer.RemoveLeft(e.offset));
                         ci.procedure.read->read = std::max(uint32_t(e.offset + e.value.len), ci.procedure.read->read);
                     }
                     else
                     {
-                        CONDBG(&ci, "Received characteristic %04X + %d via op %d: %H", e.characteristic, e.offset, e.att_opcode, Span(e.value.data, e.value.len));
+                        CONTRACE(TRACE_XFER, &ci, "Received characteristic %04X + %d via op %d: %H", e.characteristic, e.offset, e.att_opcode, Span(e.value.data, e.value.len));
                     }
                     break;
                 }
@@ -1181,7 +1192,7 @@ async_end
 
 void Bluetooth::ConnectionInfo::EndProcedure()
 {
-    CONDBG((this - bluetooth.connectionInfo) + 1, "procedure complete");
+    CONTRACE(TRACE_PROCEDURE, (this - bluetooth.connectionInfo) + 1, "procedure complete");
     procedure.type = GattProcedure::Idle;
     procedure.ptr = NULL;
     flags &= ~(ConnectionFlags::Procedure | ConnectionFlags::ProcedureRunning);
@@ -1398,19 +1409,19 @@ async_def()
 
     if (auto conn = (ConnectionInfo*)await(BeginProcedure, connection, GattProcedure::SendCharacteristicNotification))
     {
-        CONDBG(conn, "Notifying characteristic %04X = %H", characteristic, value);
+        CONTRACE(TRACE_XFER | TRACE_NOTIFY, conn, "Notifying characteristic %04X = %H", characteristic, value);
 
         auto rsp = gecko_cmd_gatt_server_send_characteristic_notification(connection.id, characteristic, value.Length(), value.Pointer<uint8_t>());
         conn->error = rsp->result;
 
         if (rsp->result != bg_err_success)
         {
-            CONDBG(conn, "...immediately failed: %s", GetErrorMessage(rsp->result));
+            CONDBG(conn, "Notify immediately failed: %s", GetErrorMessage(rsp->result));
             conn->EndProcedure();
         }
         else
         {
-            CONDBG(conn, "...sent %d", rsp->sent_len);
+            CONTRACE(TRACE_XFER | TRACE_NOTIFY, conn, "...sent %d", rsp->sent_len);
             conn->EndProcedure();
             async_return(nonzero(rsp->sent_len));
         }
@@ -1436,18 +1447,18 @@ size_t Bluetooth::TryBroadcastCharacteristicNotification(Characteristic characte
         return 0;
     }
 
-    MYTRACE("Broadcast characteristic notification %04X = %H", characteristic, value);
+    MYTRACE(TRACE_XFER | TRACE_NOTIFY, "Broadcast characteristic notification %04X = %H", characteristic, value);
 
     auto rsp = gecko_cmd_gatt_server_send_characteristic_notification(0xFF, characteristic, value.Length(), value.Pointer<uint8_t>());
 
     if (rsp->result != bg_err_success)
     {
-        MYTRACE("...immediately failed: %s", GetErrorMessage(rsp->result));
+        MYDBG("Broadcast notify immediately failed: %s", GetErrorMessage(rsp->result));
         return 0;
     }
     else
     {
-        MYTRACE("...sent %d", rsp->sent_len);
+        MYTRACE(TRACE_XFER | TRACE_NOTIFY, "...sent %d", rsp->sent_len);
         return rsp->sent_len;
     }
 }
