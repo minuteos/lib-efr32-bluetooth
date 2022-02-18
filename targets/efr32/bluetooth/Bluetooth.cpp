@@ -893,7 +893,7 @@ async_def()
         if (TxAlmostIdle())
             async_return(true);
 
-        async_sleep_ms(10);
+        async_delay_ms(10);
     }
 }
 async_end
