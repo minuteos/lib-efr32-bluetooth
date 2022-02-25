@@ -29,9 +29,11 @@
 #if BLUETOOTH_TRACE
 #define MYTRACE(mask, ...) if ((BLUETOOTH_TRACE) & (mask)) { MYDBG(__VA_ARGS__); }
 #define CONTRACE(mask, ...) if ((BLUETOOTH_TRACE) & (mask)) { CONDBG(__VA_ARGS__); }
+#define CONTRACEALT(mask, ...) if (!((BLUETOOTH_TRACE) & (mask))) { CONDBG(__VA_ARGS__); }
 #else
 #define MYTRACE(...)
 #define CONTRACE(...)
+#define CONTRACEALT(mask, ...)    CONDBG(__VA_ARGS__)
 #endif
 
 
@@ -710,8 +712,10 @@ async_def()
                 case EVENT_ID(gecko_evt_gatt_server_user_write_request_id):
                 {
                     auto &e = evt->data.evt_gatt_server_user_write_request;
-                    CONDBG(e.connection, "evt_gatt_server_user_write_request: %04X, op %d, offset %d, data %H",
+                    CONTRACE(TRACE_XFER | TRACE_WRITE, e.connection, "evt_gatt_server_user_write_request: %04X, op %d, offset %d, data %H",
                         e.characteristic, e.att_opcode, e.offset, Span(e.value.data, e.value.len));
+                    CONTRACEALT(TRACE_XFER | TRACE_WRITE, e.connection, "evt_gatt_server_user_write_request: %04X, op %d, offset %d, data %d",
+                        e.characteristic, e.att_opcode, e.offset, e.value.len);
 
                     auto& ci = *GetConnectionInfo(e.connection);
                     auto he = FindHandlers(ci, e.characteristic, AttributeHandlerType::WriteRequest);
@@ -735,7 +739,7 @@ async_def()
                             }
                         } while ((h = he.Next()));
                     }
-                    else
+                    else if (e.att_opcode == gatt_write_request)
                     {
                         MYDBG("...no write handler found");
                         gecko_cmd_gatt_server_send_user_write_response(e.connection, e.characteristic, (uint8_t)bg_err_att_att_not_found);
@@ -891,9 +895,12 @@ void Bluetooth::CharacteristicReadRequest::Respond(Span data, AttError error)
 
 void Bluetooth::CharacteristicWriteRequest::Respond(AttError error)
 {
-    UNUSED auto resp = gecko_cmd_gatt_server_send_user_write_response(connection, characteristic, (uint8_t)error);
-    CONDBG(connection, "evt_gatt_server_user_write_response: %04X, status %s = %s",
-        characteristic, GetErrorMessage(error == AttError::OK ? 0 : (uint32_t)bg_errspc_att + (uint32_t)error), GetErrorMessage(resp->result));
+    if (ResponseExpected())
+    {
+        UNUSED auto resp = gecko_cmd_gatt_server_send_user_write_response(connection, characteristic, (uint8_t)error);
+        CONDBG(connection, "evt_gatt_server_user_write_response: %04X, status %s = %s",
+            characteristic, GetErrorMessage(error == AttError::OK ? 0 : (uint32_t)bg_errspc_att + (uint32_t)error), GetErrorMessage(resp->result));
+    }
 }
 
 async(Bluetooth::TxAlmostIdle)
@@ -1493,6 +1500,7 @@ void Bluetooth::RegisterGeckoOTAStorageHandler(Characteristic charCtl, Character
                 switch (e.data[0])
                 {
                     case 0:
+                        MYDBG("Starting OTA procedure");
                         bluetooth.SetConnectionParameters(e.connection, 7.5, 7.5, 2, 3000);
                         // prepare slot (erase first block)
                         eraseUpTo = await(storage.EraseFirst, 0, 1);
@@ -1523,6 +1531,12 @@ void Bluetooth::RegisterGeckoOTAStorageHandler(Characteristic charCtl, Character
             active++;
             if (offset != ~0u)
             {
+                if (e.ResponseExpected())
+                {
+                    // wait for all previous operations to complete
+                    MYDBG("OTA sync");
+                    await_mask(active, ~0u, 1);
+                }
                 f.offset = offset;
                 offset += e.data.Length();
                 while (f.offset + e.data.Length() > eraseUpTo)
@@ -1537,6 +1551,7 @@ void Bluetooth::RegisterGeckoOTAStorageHandler(Characteristic charCtl, Character
                 }
                 MYDBG("OTA data recieved: %X+%d=%X", f.offset, e.data.Length(), offset);
                 await(storage.Write, f.offset, e.data);
+                MYDBG("OTA data written: %X+%d=%X", f.offset, e.data.Length(), offset);
                 if (f.offset + e.data.Length() + 256 > eraseUpTo && eraseUpTo < storage.Size())
                 {
                     // erase one more sector

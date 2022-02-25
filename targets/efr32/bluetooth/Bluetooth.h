@@ -334,6 +334,7 @@ public:
         uint32_t offset;
         Span data;
 
+        bool ResponseExpected() const { return opcode == gatt_write_request; }
         void Success() { Respond(AttError::OK); }
         void Error(AttError error) { Respond(error); }
         void Respond(AttError error);
